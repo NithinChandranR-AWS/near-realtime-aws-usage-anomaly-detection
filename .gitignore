@@ -10,3 +10,28 @@ __pycache__
 cdk.out
 cdk.context.json
 
+# Python packages in Lambda directories
+lambdas/*/bin/
+lambdas/*/*.dist-info/
+lambdas/*/boto3/
+lambdas/*/botocore/
+lambdas/*/certifi/
+lambdas/*/charset_normalizer/
+lambdas/*/dateutil/
+lambdas/*/idna/
+lambdas/*/jmespath/
+lambdas/*/requests/
+lambdas/*/s3transfer/
+lambdas/*/urllib3/
+lambdas/*/six.py
+lambdas/*/site-packages/
+
+# Utility scripts
+get-pip.py
+check_qbusiness_availability.py
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/
+*.pyc
