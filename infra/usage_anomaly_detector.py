@@ -29,9 +29,19 @@ class UsageAnomalyDetectorStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # sns key
-        sns_aws_key = kms.Key.from_lookup(self, 'sns-aws-key',
-            alias_name='alias/aws/sns'
+        # Create a new KMS key for SNS instead of looking up an existing one
+        sns_aws_key = kms.Key(self, 'sns-key',
+            description='KMS key for SNS encryption',
+            enable_key_rotation=True,
+            policy=iam.PolicyDocument(
+                statements=[
+                    iam.PolicyStatement(
+                        actions=["kms:*"],
+                        resources=["*"],
+                        principals=[iam.AccountRootPrincipal()]
+                    )
+                ]
+            )
         )
 
         # contexts/parameteres
@@ -323,6 +333,7 @@ class UsageAnomalyDetectorStack(Stack):
         )
 
             OPENSEARCH_DOMAIN_ENDPOINT = domain.domain_endpoint
+            self.domain = domain
 
             domain_user_pool_clients = cr.AwsCustomResource(
             self, 

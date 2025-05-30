@@ -32,7 +32,7 @@ class OrganizationTrailStack(Stack):
         )
 
         # Add key policy for CloudTrail service
-        trail_key.add_to_policy(
+        trail_key.add_to_resource_policy(
             iam.PolicyStatement(
                 sid="Enable CloudTrail to encrypt logs",
                 actions=["kms:GenerateDataKey*", "kms:DescribeKey"],
@@ -116,6 +116,7 @@ class OrganizationTrailStack(Stack):
             is_multi_region_trail=True,
             include_global_service_events=True,
             enable_log_file_validation=True,
+            is_logging=True,
             event_selectors=[
                 cloudtrail.CfnTrail.EventSelectorProperty(
                     read_write_type="All",
