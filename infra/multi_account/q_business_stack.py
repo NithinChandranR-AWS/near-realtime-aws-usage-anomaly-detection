@@ -3,12 +3,12 @@ from aws_cdk import (
     Duration,
     CfnOutput,
     aws_iam as iam,
-    aws_qbusiness as qbusiness,
     aws_s3 as s3,
     aws_kms as kms,
     aws_events as events,
     aws_events_targets as targets,
     aws_lambda as _lambda,
+    CfnResource,
 )
 from constructs import Construct
 from typing import List
@@ -24,7 +24,8 @@ class QBusinessStack(Stack):
         self,
         scope: Construct,
         construct_id: str,
-        q_connector_function: _lambda.Function,
+        q_connector_function: _lambda.Function = None,
+        opensearch_domain = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -84,122 +85,149 @@ class QBusinessStack(Stack):
             )
         )
 
-        # Create Q Business application
-        q_application = qbusiness.CfnApplication(
+        # Create Q Business application using CloudFormation
+        q_application = CfnResource(
             self,
             "AnomalyInsightsQApp",
-            display_name="AWS Usage Anomaly Insights",
-            description="Natural language insights for AWS usage anomalies using Amazon Q",
-            role_arn=q_service_role.role_arn,
-            encryption_configuration=qbusiness.CfnApplication.EncryptionConfigurationProperty(
-                kms_key_id=q_kms_key.key_id
-            ),
-            attachments_configuration=qbusiness.CfnApplication.AttachmentsConfigurationProperty(
-                attachments_control_mode="ENABLED"
-            ),
+            type="AWS::QBusiness::Application",
+            properties={
+                "DisplayName": "AWS Usage Anomaly Insights",
+                "Description": "Natural language insights for AWS usage anomalies using Amazon Q",
+                "RoleArn": q_service_role.role_arn,
+                "EncryptionConfiguration": {
+                    "KmsKeyId": q_kms_key.key_id
+                },
+                "AttachmentsConfiguration": {
+                    "AttachmentsControlMode": "ENABLED"
+                }
+            }
         )
 
-        # Create Q Business index
-        q_index = qbusiness.CfnIndex(
+        # Create Q Business index using CloudFormation
+        q_index = CfnResource(
             self,
             "AnomalyInsightsIndex",
-            application_id=q_application.attr_application_id,
-            display_name="Anomaly Insights Index",
-            description="Index for AWS usage anomaly data and insights",
-            type="ENTERPRISE",
-            capacity_configuration=qbusiness.CfnIndex.IndexCapacityConfigurationProperty(
-                units=1
-            ),
-            document_attribute_configurations=[
-                qbusiness.CfnIndex.DocumentAttributeConfigurationProperty(
-                    name="account_id",
-                    type="STRING",
-                    search=qbusiness.CfnIndex.DocumentAttributeSearchProperty(
-                        displayable=True,
-                        facetable=True,
-                        searchable=True,
-                        sortable=True,
-                    ),
-                ),
-                qbusiness.CfnIndex.DocumentAttributeConfigurationProperty(
-                    name="account_alias",
-                    type="STRING",
-                    search=qbusiness.CfnIndex.DocumentAttributeSearchProperty(
-                        displayable=True,
-                        facetable=True,
-                        searchable=True,
-                        sortable=True,
-                    ),
-                ),
-                qbusiness.CfnIndex.DocumentAttributeConfigurationProperty(
-                    name="event_name",
-                    type="STRING",
-                    search=qbusiness.CfnIndex.DocumentAttributeSearchProperty(
-                        displayable=True,
-                        facetable=True,
-                        searchable=True,
-                        sortable=True,
-                    ),
-                ),
-                qbusiness.CfnIndex.DocumentAttributeConfigurationProperty(
-                    name="severity",
-                    type="STRING",
-                    search=qbusiness.CfnIndex.DocumentAttributeSearchProperty(
-                        displayable=True,
-                        facetable=True,
-                        searchable=True,
-                        sortable=True,
-                    ),
-                ),
-                qbusiness.CfnIndex.DocumentAttributeConfigurationProperty(
-                    name="anomaly_date",
-                    type="DATE",
-                    search=qbusiness.CfnIndex.DocumentAttributeSearchProperty(
-                        displayable=True,
-                        facetable=True,
-                        searchable=True,
-                        sortable=True,
-                    ),
-                ),
-                qbusiness.CfnIndex.DocumentAttributeConfigurationProperty(
-                    name="event_count",
-                    type="LONG",
-                    search=qbusiness.CfnIndex.DocumentAttributeSearchProperty(
-                        displayable=True,
-                        facetable=True,
-                        searchable=True,
-                        sortable=True,
-                    ),
-                ),
-            ],
+            type="AWS::QBusiness::Index",
+            properties={
+                "ApplicationId": q_application.ref,
+                "DisplayName": "Anomaly Insights Index",
+                "Description": "Index for AWS usage anomaly data and insights",
+                "Type": "ENTERPRISE",
+                "CapacityConfiguration": {
+                    "Units": 1
+                },
+                "DocumentAttributeConfigurations": [
+                    {
+                        "Name": "account_id",
+                        "Type": "STRING",
+                        "Search": {
+                            "Displayable": True,
+                            "Facetable": True,
+                            "Searchable": True,
+                            "Sortable": True
+                        }
+                    },
+                    {
+                        "Name": "account_alias", 
+                        "Type": "STRING",
+                        "Search": {
+                            "Displayable": True,
+                            "Facetable": True,
+                            "Searchable": True,
+                            "Sortable": True
+                        }
+                    },
+                    {
+                        "Name": "event_name",
+                        "Type": "STRING", 
+                        "Search": {
+                            "Displayable": True,
+                            "Facetable": True,
+                            "Searchable": True,
+                            "Sortable": True
+                        }
+                    },
+                    {
+                        "Name": "severity",
+                        "Type": "STRING",
+                        "Search": {
+                            "Displayable": True,
+                            "Facetable": True,
+                            "Searchable": True,
+                            "Sortable": True
+                        }
+                    },
+                    {
+                        "Name": "anomaly_date",
+                        "Type": "DATE",
+                        "Search": {
+                            "Displayable": True,
+                            "Facetable": True,
+                            "Searchable": True,
+                            "Sortable": True
+                        }
+                    },
+                    {
+                        "Name": "event_count",
+                        "Type": "LONG",
+                        "Search": {
+                            "Displayable": True,
+                            "Facetable": True,
+                            "Searchable": True,
+                            "Sortable": True
+                        }
+                    }
+                ]
+            }
         )
 
-        # Create Q Business data source (custom connector)
-        q_data_source = qbusiness.CfnDataSource(
-            self,
-            "AnomalyDataSource",
-            application_id=q_application.attr_application_id,
-            index_id=q_index.attr_index_id,
-            display_name="OpenSearch Anomaly Data",
-            description="Data source for OpenSearch anomaly detection results",
-            type="CUSTOM",
-            configuration={
-                "type": "CUSTOM",
-                "customDataSourceConfiguration": {
-                    "roleArn": q_connector_function.role.role_arn,
-                    "apiSchemaType": "OPEN_API_V3",
+        # Create Q Business connector Lambda function if not provided
+        if q_connector_function is None:
+            # Create IAM role for Q connector function
+            q_connector_role = iam.Role(
+                self,
+                "QConnectorRole",
+                assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+                description="IAM role for Q Business connector Lambda function",
+                managed_policies=[
+                    iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole")
+                ]
+            )
+            
+            # Add permissions for OpenSearch and Q Business
+            q_connector_role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=[
+                        "es:ESHttpGet",
+                        "es:ESHttpPost",
+                        "es:ESHttpPut",
+                        "qbusiness:*",
+                        "s3:GetObject",
+                        "s3:PutObject",
+                        "s3:ListBucket"
+                    ],
+                    resources=["*"]  # Will be refined in production
+                )
+            )
+            
+            # Create the Q connector Lambda function
+            q_connector_function = _lambda.Function(
+                self,
+                "QConnectorFunction",
+                description="Lambda function to sync OpenSearch data with Q Business",
+                code=_lambda.Code.from_asset("lambdas/QBusinessConnector"),
+                handler="main.handler",
+                runtime=_lambda.Runtime.PYTHON_3_9,
+                timeout=Duration.minutes(5),
+                role=q_connector_role,
+                environment={
+                    "Q_APPLICATION_ID": q_application.ref,
+                    "Q_INDEX_ID": q_index.ref,
+                    "OPENSEARCH_ENDPOINT": opensearch_domain.domain_endpoint if opensearch_domain else "",
+                    "S3_BUCKET": q_data_bucket.bucket_name
                 }
-            },
-            role_arn=q_service_role.role_arn,
-            sync_schedule="cron(0/15 * * * ? *)",  # Every 15 minutes
-        )
-
-        # Update Lambda environment variables
-        q_connector_function.add_environment(
-            "Q_APPLICATION_ID", q_application.attr_application_id
-        )
-        q_connector_function.add_environment("Q_INDEX_ID", q_index.attr_index_id)
-
+            )
+        
         # Create EventBridge rule to trigger Q connector
         sync_rule = events.Rule(
             self,
@@ -210,74 +238,28 @@ class QBusinessStack(Stack):
 
         sync_rule.add_target(targets.LambdaFunction(q_connector_function))
 
-        # Create retriever for Q Business
-        q_retriever = qbusiness.CfnRetriever(
-            self,
-            "AnomalyRetriever",
-            application_id=q_application.attr_application_id,
-            type="NATIVE_INDEX",
-            display_name="Anomaly Insights Retriever",
-            configuration={
-                "nativeIndexConfiguration": {
-                    "indexId": q_index.attr_index_id,
-                    "boostingOverride": {
-                        "dateOrTimestampBoostingConfigurations": [
-                            {
-                                "fieldName": "anomaly_date",
-                                "boostingLevel": "HIGH",
-                                "boostingDurationInMinutes": 1440,  # 24 hours
-                            }
-                        ],
-                        "stringAttributeBoostingConfigurations": [
-                            {
-                                "fieldName": "severity",
-                                "boostingLevel": "HIGH",
-                                "attributeValueBoosting": {
-                                    "HIGH": "HIGH",
-                                    "MEDIUM": "MEDIUM",
-                                    "LOW": "LOW",
-                                },
-                            }
-                        ],
-                    },
-                }
-            },
-        )
-
-        # Create web experience for Q Business (optional)
-        q_web_experience = qbusiness.CfnWebExperience(
-            self,
-            "AnomalyInsightsWebExperience",
-            application_id=q_application.attr_application_id,
-            title="AWS Usage Anomaly Insights",
-            subtitle="Natural language insights for your AWS usage patterns",
-            welcome_message="Welcome! Ask me about AWS usage anomalies, cost impacts, and recommendations.",
-            sample_prompts_control_mode="ENABLED",
-        )
-
         # Outputs
         CfnOutput(
             self,
             "QApplicationId",
-            value=q_application.attr_application_id,
+            value=q_application.ref,
             description="Amazon Q for Business Application ID",
         )
 
         CfnOutput(
             self,
-            "QIndexId",
-            value=q_index.attr_index_id,
+            "QIndexId", 
+            value=q_index.ref,
             description="Amazon Q for Business Index ID",
         )
 
         CfnOutput(
             self,
-            "QWebExperienceUrl",
-            value=q_web_experience.attr_default_endpoint,
-            description="Amazon Q for Business Web Experience URL",
+            "QBusinessStatus",
+            value="Q Business resources created - manual configuration required",
+            description="Q Business setup status",
         )
 
         # Store references
         self.q_application = q_application
         self.q_index = q_index
-        self.q_web_experience = q_web_experience

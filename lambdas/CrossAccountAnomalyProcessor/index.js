@@ -140,23 +140,24 @@ async function postToOpenSearch(body) {
     const https = require('https');
     const aws4 = require('aws4');
     
+    const requestBody = body.map(JSON.stringify).join('\n') + '\n';
+    
     const options = {
         host: endpoint,
         path: '/cwl-multiaccounts/_bulk',
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-ndjson',
-            'Content-Length': Buffer.byteLength(body.map(JSON.stringify).join('\n') + '\n')
-        }
+            'Content-Length': Buffer.byteLength(requestBody)
+        },
+        body: requestBody
     };
     
-    // Sign the request if using IAM auth
-    if (process.env.AWS_REGION) {
-        aws4.sign(options, {
-            service: 'es',
-            region: process.env.AWS_REGION
-        });
-    }
+    // Sign the request with AWS credentials
+    aws4.sign(options, {
+        service: 'es',
+        region: process.env.AWS_REGION || 'us-east-1'
+    });
     
     return new Promise((resolve, reject) => {
         const req = https.request(options, (res) => {
@@ -164,7 +165,11 @@ async function postToOpenSearch(body) {
             res.on('data', (chunk) => responseBody += chunk);
             res.on('end', () => {
                 if (res.statusCode >= 200 && res.statusCode < 300) {
-                    resolve(JSON.parse(responseBody));
+                    try {
+                        resolve(JSON.parse(responseBody));
+                    } catch (e) {
+                        resolve({ acknowledged: true });
+                    }
                 } else {
                     reject(new Error(`OpenSearch returned status ${res.statusCode}: ${responseBody}`));
                 }
@@ -172,7 +177,7 @@ async function postToOpenSearch(body) {
         });
         
         req.on('error', reject);
-        req.write(body.map(JSON.stringify).join('\n') + '\n');
+        req.write(requestBody);
         req.end();
     });
 }

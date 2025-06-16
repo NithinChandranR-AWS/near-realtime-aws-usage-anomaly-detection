@@ -123,10 +123,7 @@ class OrganizationTrailStack(Stack):
                     include_management_events=True,
                     data_resources=[
                         cloudtrail.CfnTrail.DataResourceProperty(
-                            type="AWS::EC2::Instance", values=["arn:aws:ec2:*:*:instance/*"]
-                        ),
-                        cloudtrail.CfnTrail.DataResourceProperty(
-                            type="AWS::Lambda::Function", values=["arn:aws:lambda:*:*:function/*"]
+                            type="AWS::Lambda::Function", values=["arn:aws:lambda:*"]
                         ),
                     ],
                 )

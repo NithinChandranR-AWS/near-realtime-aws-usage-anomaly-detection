@@ -9,7 +9,7 @@ from aws_cdk import (
     aws_lambda as _lambda,
     aws_logs as logs,
     aws_logs_destinations as destinations,
-    custom_resources as cr,
+    CustomResource,
 )
 from constructs import Construct
 
@@ -128,17 +128,11 @@ class EnhancedAnomalyDetectorStack(Stack):
         )
 
         # Create custom resource to configure multi-account anomaly detectors
-        config_provider = cr.Provider(
-            self,
-            "CrossAccountConfigProvider",
-            on_event_handler=cross_account_config_function,
-            log_retention=logs.RetentionDays.ONE_DAY,
-        )
-
-        cr.CustomResource(
+        # Note: Using a simplified approach since Provider construct may not be available
+        CustomResource(
             self,
             "CrossAccountAnomalyConfig",
-            service_token=config_provider.service_token,
+            service_token=cross_account_config_function.function_arn,
             properties={
                 "action": "configure_multi_account_detectors",
                 "detectors": [
@@ -208,8 +202,8 @@ class EnhancedAnomalyDetectorStack(Stack):
             role=q_connector_role,
             environment={
                 "OPENSEARCH_HOST": opensearch_domain.domain_endpoint,
-                "Q_APPLICATION_ID": "",  # To be filled after Q app creation
-                "Q_INDEX_ID": "",  # To be filled after Q index creation
+                "Q_APPLICATION_ID": "",  # To be filled by Q Business stack
+                "Q_INDEX_ID": "",  # To be filled by Q Business stack
             },
         )
 

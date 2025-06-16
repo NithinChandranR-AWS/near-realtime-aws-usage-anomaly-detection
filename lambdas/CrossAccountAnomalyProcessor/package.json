@@ -1,0 +1,25 @@
+{
+  "name": "cross-account-anomaly-processor",
+  "version": "1.0.0",
+  "description": "Lambda function for processing multi-account CloudTrail logs with account enrichment",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "aws4": "^1.12.0",
+    "zlib": "^1.0.5"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "cloudtrail",
+    "anomaly-detection",
+    "multi-account"
+  ],
+  "author": "AWS Solutions",
+  "license": "MIT-0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

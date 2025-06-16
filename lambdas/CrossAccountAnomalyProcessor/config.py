@@ -8,9 +8,8 @@ from datetime import datetime
 
 # Environment variables
 OPENSEARCH_HOST = os.environ.get('OPENSEARCH_HOST')
-OPENSEARCH_USERNAME = os.environ.get('OPENSEARCH_USERNAME', 'admin')
-OPENSEARCH_PASSWORD = os.environ.get('OPENSEARCH_PASSWORD', 'admin')
 ENABLE_MULTI_ACCOUNT = os.environ.get('ENABLE_MULTI_ACCOUNT', 'true').lower() == 'true'
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
 
 # Initialize AWS clients
 organizations = boto3.client('organizations')
@@ -374,20 +373,32 @@ def create_cross_account_dashboards():
 
 def opensearch_request(method, path, body=None):
     """
-    Make authenticated request to OpenSearch
+    Make authenticated request to OpenSearch using AWS IAM
     """
+    from botocore.auth import SigV4Auth
+    from botocore.awsrequest import AWSRequest
+    import urllib3
+    
     url = f"https://{OPENSEARCH_HOST}{path}"
-    auth = HTTPBasicAuth(OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD)
     headers = {'Content-Type': 'application/json'}
     
-    response = requests.request(
+    # Create AWS request for signing
+    request = AWSRequest(method=method, url=url, data=json.dumps(body) if body else None, headers=headers)
+    
+    # Sign the request with AWS credentials
+    credentials = boto3.Session().get_credentials()
+    SigV4Auth(credentials, 'es', AWS_REGION).add_auth(request)
+    
+    # Make the request
+    http = urllib3.PoolManager()
+    response = http.request(
         method,
         url,
-        auth=auth,
-        headers=headers,
-        json=body,
-        verify=False  # In production, use proper SSL verification
+        body=request.body,
+        headers=dict(request.headers)
     )
     
-    response.raise_for_status()
-    return response.json() if response.text else {}
+    if response.status >= 400:
+        raise Exception(f"OpenSearch request failed with status {response.status}: {response.data.decode()}")
+    
+    return json.loads(response.data.decode()) if response.data else {}
