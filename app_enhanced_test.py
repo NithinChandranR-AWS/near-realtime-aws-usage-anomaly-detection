@@ -27,9 +27,11 @@ if deployment_mode == "multi-account":
         print("Using existing organization trail...")
         # Import existing log group
         from aws_cdk import aws_logs as logs
+        # Import existing log group - replace with your actual log group name
+        existing_log_group_name = app.node.try_get_context("existing-log-group-name") or "aws-cloudtrail-logs-ACCOUNT-ID-RANDOM"
         existing_log_group = logs.LogGroup.from_log_group_name(
             app, "ExistingOrgTrailLogGroup", 
-            "aws-cloudtrail-logs-764710143902-caec8952"
+            existing_log_group_name
         )
         
         # Deploy the base anomaly detector stack

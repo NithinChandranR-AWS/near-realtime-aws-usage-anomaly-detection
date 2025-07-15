@@ -1,154 +1,193 @@
+# Multi-Account AWS Usage Anomaly Detection System
 
-# Near-Real Time Usage Anomaly Detection using OpenSearch
+A comprehensive solution for detecting usage anomalies across multiple AWS accounts with natural language insights powered by Amazon Q for Business.
 
-Detecting usage anomalies promptly is crucial because they can result in unforeseen charges. The Near-Real Time Usage Anomaly Detection solutions offers the capabilities to address this issue effectively. 
+> **AWS Sample**: This repository demonstrates best practices for implementing multi-account anomaly detection. Please review and customize according to your specific requirements before deploying in production.
 
-Anomalies often manifest as an unusual number of invocations (known as spikes) of specific AWS APIs that involve provisioning or running AWS resources. Such anomalies can occur due to unintentional errors, such as a Lambda function stuck in a loop, or due to malicious activities like the use of leaked keys to create expensive GPU instances for cryptocurrency mining.
+## 🏗️ Architecture
 
-This solution leverages the [OpenSearch Anomaly Detection](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/ad.html) feature to ingest in real-time CloudTrail management and data events and evaluate anomalies on specific API calls.
+![Architecture Overview](docs/architecture.md)
 
-Currently this solution evaluates anomalies for 3 APIs. The target APIs are: 
-- EC2 [RunInstances](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_RunInstances.html)
-- EC2 EBS [CreateVolume](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVolume.html)
-- Lambda [Invoke](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)
+The solution provides:
+- **Multi-account monitoring** across AWS Organizations
+- **Real-time anomaly detection** for EC2, Lambda, and EBS usage
+- **Natural language insights** through Amazon Q for Business
+- **Comprehensive alerting** with contextual information
 
-The number of monitored APIs can be easily extended and we look forward to receive feedback from the community for further APIs to add. We also welcome contributions.
+## 🚀 Quick Start
 
-This solution provides a range of features that can be easily adapted and tailored to suit your individual requirements, including:
+### Prerequisites
 
-1. Configuration of OpenSearch and Cognito integration via CDK
-2. Implementation of both high-cardinality and low-cardinality anomaly detection techniques
-3. Ingestion of CloudTrail logs into OpenSearch in real-time
-4. Development of custom dashboards using CloudTrail events
-5. How to programmatically setup OpenSearch anomaly detectors and alerts through CDK
-6. Dynamic enrichment of anomaly notifications with contextual information via a Lambda function
+- AWS Organizations enabled with management account access
+- AWS CDK v2.110.0 or higher
+- Python 3.8+ and Node.js 18+
+- Appropriate IAM permissions for deployment
 
-## Architecture
-![Architecture](images/usage_anomaly_detector.png "Architecture")
+### Deployment
 
-> NOTE: OpenSearch is deployed as public access domain and authentication is implemented via AWS Cognito. You should deploy OpenSearch inside a VPC if you want to limit access to private routes only.
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/aws-samples/multi-account-anomaly-detection.git
+   cd multi-account-anomaly-detection
+   ```
 
-The primary components of the solution's architecture are:
+2. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-- AWS CloudTrail events centralized in an Amazon CloudWatch Logs log group.
-- Amazon CloudWatch Logs log group data streaming to the Amazon OpenSearch domain in near real-time, facilitated by the LogsToOpenSearch Lambda function.
-- OpenSearch Anomaly Detection module configured to detect usage anomalies in the ingested CloudTrail API calls.
-- OpenSearch Alerting plugin responsible for dispatching alerts to customers for verification and remediation through the SNS AlertTopic.
-- EnrichedNotification Lambda function, which enriches the alerts before sending them to the end user via the NotificationTopic.
-- OpenSearch Dashboards access enabled by user authentication through the OpenSearchUser Cognito.
+3. **Deploy the solution**:
+   ```bash
+   # For new organization trail
+   ./deploy_multi_account_enhanced.sh
+   
+   # For existing organization trail
+   cdk deploy --context use-existing-trail=true --context existing-log-group-name=YOUR_LOG_GROUP_NAME --all
+   ```
 
-## Pre-requisites
-- [AWS Cloud Development Kit](https://docs.aws.amazon.com/cdk/v2/guide/home.html) version 2.100.0.
--  All required libraries installed using python pip. Below commands are run locally from the root of the repository.
+4. **Validate deployment**:
+   ```bash
+   python validate_enhanced_deployment.py
+   ```
 
-    ```
-    pip install -r requirements.txt
-    pip install -r shared/python/requirements.txt -t shared/python 
-    ```  
-The above commands will also download the python libraries for the lambda layer.
+## 📊 Features
 
-## Deployment
+### Multi-Account Support
+- Organization-wide CloudTrail integration
+- Cross-account anomaly detection with account categorization
+- Account metadata enrichment using AWS Organizations API
+- Support for existing organization trails
 
-### Enhanced Multi-Account Deployment (Recommended)
+### Amazon Q for Business Integration
+- Natural language query interface for anomaly insights
+- Identity Center integration for secure access control
+- Automated anomaly data synchronization
+- Cost impact analysis and security recommendations
 
-For organization-wide anomaly detection with Amazon Q for Business integration:
+### Enhanced Monitoring
+- Real-time CloudWatch dashboards
+- Comprehensive error handling with retry logic
+- Dead letter queue processing for failed events
+- System health monitoring with automated checks
 
-```bash
-# Quick deployment with enhanced script
-./deploy_multi_account_enhanced.sh -e your-email@company.com -r us-east-1
+## 🔧 Configuration
 
-# Or manual deployment
-cdk deploy --app "python3 app_enhanced_test.py" \
-  --context deployment-mode=multi-account \
-  --context opensearch-version=OPENSEARCH_2_9 \
-  --context enable-lambda-trail=true \
-  --parameters EnhancedUsageAnomalyDetectorStack:opensearchalertemail=your-email@company.com \
-  --all \
-  --require-approval never
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `deployment-mode` | Deployment mode (single-account/multi-account) | single-account |
+| `use-existing-trail` | Use existing organization trail | false |
+| `existing-log-group-name` | Existing CloudTrail log group name | aws-cloudtrail-logs-ACCOUNT-ID-RANDOM |
+
+### Account Type Configuration
+
+Tag your AWS accounts using AWS Organizations:
+
+```json
+{
+  "AccountType": "production|staging|development",
+  "Environment": "prod|staging|dev",
+  "CostCenter": "engineering|security|operations"
+}
 ```
 
-**Enhanced Features:**
-- 🏢 **Multi-Account Support**: Monitor anomalies across your entire AWS Organization
-- 🤖 **Amazon Q Integration**: Natural language insights and recommendations
-- 📊 **Advanced Analytics**: Cross-account correlation and cost impact analysis
-- 🔍 **Enhanced Detection**: High-cardinality anomaly detection with account categorization
-- 📈 **Rich Dashboards**: Organization-wide visibility and reporting
+### Anomaly Thresholds
 
-See [ENHANCED_DEPLOYMENT_GUIDE.md](./ENHANCED_DEPLOYMENT_GUIDE.md) for detailed instructions.
+Customize thresholds in `lambdas/CrossAccountAnomalyProcessor/config.py`:
 
-### Single-Account Deployment (Legacy)
+```python
+THRESHOLDS = {
+    'production': {'ec2': 10, 'lambda': 1000, 'ebs': 20},
+    'staging': {'ec2': 5, 'lambda': 500, 'ebs': 10},
+    'development': {'ec2': 2, 'lambda': 100, 'ebs': 5}
+}
+```
 
-- Deploy complete stack:  
+## 📈 Monitoring
 
-    ```
-    cdk deploy \
-    --context opensearch-version='<OPENSEARCH_n_m>' \
-    --parameters opensearchalertemail='<alert_email>'
-    ```  
-    This will do the following in the target account : 
-    1. Create CloudTrail trails with target CloudWatch log-group for the trails.
-    2. Create OpenSearch Domain with Cognito auth for user management.
-    3. Setup Cloudwatch subscription filter (using Lambda) to forward logs to OpenSearch.
-    4. Create Lambda functions for Opensearch configuration automation(IAM Role mapping, anomaly detector creation).
-    5. Create SNS topics for alerts and notification lambda for enriched notifications.  
+### CloudWatch Dashboard
+Access the monitoring dashboard in the AWS Console under CloudWatch > Dashboards > "MultiAccountAnomalyDetection"
 
-- Deploy to existing OpenSearch domain:  
+### SNS Alerts
+Subscribe to system alerts:
+```bash
+aws sns subscribe \
+  --topic-arn <SystemAlertsTopicArn> \
+  --protocol email \
+  --notification-endpoint your-email@example.com
+```
 
-    ```
-    cdk deploy \
-    --context opensearch-version='<OPENSEARCH_n_m>' \
-    --context opensearch-domain-endpoint='<endpoint_domain>' \
-    --context opensearch-access-role-arn='<iam_role_arn>' \
-    --parameters opensearchalertemail='<alert_email>'
-    ```  
-    This will create CloudTrail trail and ingest the trails to the provided OpenSearch domain. It will also create the anomaly detectors in the provided domain.  
-    For setting up the access IAM role, please check [existing_domain_deploy](./existing_domain_deploy.md) guide.  
+### Custom Metrics
+The system publishes metrics to the `MultiAccountAnomalyDetection` namespace:
+- `OverallHealthScore`: System health percentage (0-100)
+- `ProcessingSuccessRate`: Event processing success rate
+- `LambdaErrorRate`: Lambda function error rates
 
-> NOTE: The IAM roles use AWS ManagedPolicies for various cases like lambdaExecution, etc. If required, please update to use self managed policies.  
+## 🤖 Amazon Q for Business
 
-You can set the context to disable Lambda logging with the trail by setting: `--context enable-lambda-trail=false`. This will skip the Lambda Anomaly detector creation.  
+### Natural Language Queries
+Example queries you can ask Q Business:
+- "Show me EC2 anomalies from the last 24 hours"
+- "What accounts had the highest cost impact this week?"
+- "Are there any security concerns with recent Lambda anomalies?"
+- "Compare anomaly patterns between production and staging accounts"
 
-Furthermore, please examine the notification subscription confirmation email delivered to `<alert_email>` and confirm your subscription in order to obtain alert emails.
+### Setup
+1. Identity Center is automatically configured during deployment
+2. Add users to the "QBusinessAdmins" group for access
+3. Access Q Business through the AWS Console
 
-## Usage
-Once the deployment process concludes, the output from the CDK stack offers essential links for utilizing the solution.  
-Two primary URLs will be accessible: one for the OpenSearch dashboard endpoint and another for the Cognito user creation. Additionally, these URLs can be located within the Outputs tab of the CloudFormation console, as demonstrated in the example provided below:
-![CloudFormation Outputs tab](images/cfn_outputs_tab.png "Outputs Tab")
+## 🔍 Troubleshooting
 
-- Use the `OpenSearchCreateUserUrl` link (or navigate to the Cognito user pool in the AWS console) to create a new user to access the OpenSearch Dashboard. You can choose to make the user verified or send an invitation, as in the example shown below and then click **Create user**.
-![Cognito OpenSearch User Creation](images/cognito_create_user.png "Cognito Create User")  
-- The user by default does NOT have access to the OpenSearch security management permissions. If you want to provide full access control, please add the user to the `opensearch-admin` group:  
-![Cognito OpenSearch admin group](images/opensearch_admin_group.png "OpenSearch Admin Group")  
+### Common Issues
 
-- To access the OpenSearch Dashboard, either use the `OpenSearchDashboardEndpoint` URL or proceed to the corresponding URL within the OpenSearch Service section of the AWS Console.  
-- Inspect the `cwl-*` index pattern found in the Discover section to view all CloudTrail logs.
-- Explore the Dashboard section to find resource usage dashboards for EC2, EBS, Lambda, and insights derived from CloudTrail events. View example dashboard images [here](images/dashboard/).
-- Examine the **Anomaly Detection > Detectors** section to discover anomaly detectors associated with EC2 RunInstances, EBS CreateVolume, and Lambda Invoke API calls:  
-![Anomaly Detectors](images/anomaly_detectors.png "Anomaly Detectors")  
+1. **CDK Version Compatibility**:
+   ```bash
+   npm install -g aws-cdk@latest
+   pip install -r requirements.txt --upgrade
+   ```
 
-The anomaly detectors will send an email notification based on detected anomalies, for details check section below.  
-If you want to send a test notification, follow the steps:  
-1. In the OpenSearch Dashboard, navigate to **Alerting > Monitors** and click on monitor for which you wish to send the test notification:  
-![OpenSearch Alerting Monitors](images/opensearch_alerting_monitors.png "Alerting Monitors")  
-2. Click **Edit** and scroll down to **Triggers > Actions** and click **Send test message**:  
-![Send test message](images/send_test_message.png "Send test message")
+2. **Organization Permissions**:
+   ```bash
+   aws organizations list-accounts
+   ```
 
+3. **Validation**:
+   ```bash
+   python validate_enhanced_deployment.py
+   ```
 
-## Anomaly Detection
-Amazon OpenSearch Service supports a highly performant, integrated anomaly detection engine that enables near real-time identification of anomalies in streaming data. Anomaly detection in Amazon OpenSearch Service automatically detects anomalies in your OpenSearch data in near-real time by using the Random Cut Forest (RCF) algorithm. RCF is an unsupervised machine learning algorithm that models a sketch of your incoming data stream. The algorithm computes an anomaly grade and confidence score value for each incoming data point. Anomaly detection uses these values to differentiate an anomaly from normal variations in your data.  
+For detailed troubleshooting, see [troubleshooting.md](troubleshooting.md).
 
-For EC2, we use anomaly detector on RunInstance API call which provisions EC2s. An example anomaly detection can be seen below:  
-![EC2 Anomalies](images/ec2_anomalies.png "EC2 Anomalies")
+## 🔒 Security
 
-For Lambda, we are using [high-cardinality anomaly detection](https://aws.amazon.com/blogs/big-data/a-deep-dive-into-high-cardinality-anomaly-detection-in-elasticsearch/).  
-Check below screenshot for example anomaly:  
-![Lambda HCAD Anomaly Detection](images/lambda_highcard_anomaly_detection.png "Lambda HCAD Anomaly Detection")  
-![Lambda Invoke Anomaly](images/lambda_highcard_anomalies.png "Lambda Anomalies")
+The solution implements security best practices:
+- **Least privilege IAM roles** for all components
+- **Identity Center integration** for Q Business access
+- **KMS encryption** for data at rest and in transit
+- **VPC deployment options** for network isolation
+- **Comprehensive audit logging**
 
-## Security
+## 📄 Documentation
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+- [Architecture Overview](docs/architecture.md)
+- [Deployment Guide](deployment-guide.md)
+- [Troubleshooting Guide](troubleshooting.md)
+- [Enhancement Summary](enhancement-summary.md)
 
-## License
+## 🤝 Contributing
 
-This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file.
+We welcome contributions! Please see [CONTRIBUTING.md](contributing.md) for details.
+
+## 📄 License
+
+This project is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file for details.
+
+## ⚠️ Disclaimer
+
+This is a sample implementation for demonstration purposes. Please review the code and customize it according to your specific security and compliance requirements before deploying in production environments.
+
+---
+
+**AWS Sample** | **Multi-Account Anomaly Detection** | **Amazon Q for Business Integration**
