@@ -4,6 +4,7 @@ import boto3  # type: ignore
 import requests
 from requests.auth import HTTPBasicAuth
 import time
+import traceback
 from datetime import datetime
 
 # Environment variables
@@ -19,45 +20,78 @@ def handler(event, context):
     """
     Lambda handler to configure multi-account anomaly detectors
     """
-    print(f"Event: {json.dumps(event)}")
+    start_time = datetime.utcnow()
+    print(f"Starting multi-account detector configuration at {start_time}")
+    print(f"Event: {json.dumps(event, default=str)}")
     
     request_type = event.get('RequestType', 'Create')
     
     try:
         if request_type in ['Create', 'Update']:
             # Get organization accounts
+            print("Fetching organization accounts...")
             accounts = get_organization_accounts()
             print(f"Found {len(accounts)} accounts in organization")
             
+            # Log account details
+            for account in accounts[:5]:  # Log first 5 accounts
+                print(f"  - Account: {account['name']} ({account['id']})")
+            if len(accounts) > 5:
+                print(f"  - ... and {len(accounts) - 5} more accounts")
+            
             # Create multi-account anomaly detectors
             detectors = event['ResourceProperties'].get('detectors', [])
+            print(f"Creating {len(detectors)} anomaly detectors...")
             results = []
             
             for detector_config in detectors:
+                print(f"Creating detector: {detector_config['name']}")
                 result = create_multi_account_detector(detector_config, accounts)
                 results.append(result)
+                print(f"  - Status: {result['status']}")
             
             # Create cross-account dashboards
+            print("Creating cross-account dashboards...")
             create_cross_account_dashboards()
+            
+            processing_time = (datetime.utcnow() - start_time).total_seconds()
+            print(f"Configuration completed in {processing_time:.2f} seconds")
             
             return {
                 'PhysicalResourceId': f'multi-account-detectors-{context.request_id}',
                 'Data': {
                     'DetectorsCreated': len(results),
-                    'AccountsMonitored': len(accounts)
+                    'AccountsMonitored': len(accounts),
+                    'ProcessingTimeSeconds': processing_time,
+                    'ConfigurationStatus': 'SUCCESS'
                 }
             }
             
         elif request_type == 'Delete':
             # Clean up detectors if needed
-            print("Delete request - no cleanup needed")
+            print("Delete request - performing cleanup...")
+            cleanup_detectors()
             return {
-                'PhysicalResourceId': event.get('PhysicalResourceId', 'deleted')
+                'PhysicalResourceId': event.get('PhysicalResourceId', 'deleted'),
+                'Data': {
+                    'ConfigurationStatus': 'DELETED'
+                }
             }
             
     except Exception as e:
-        print(f"Error: {str(e)}")
-        raise
+        processing_time = (datetime.utcnow() - start_time).total_seconds()
+        print(f"Error after {processing_time:.2f} seconds: {str(e)}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        
+        # Return failure response for CloudFormation
+        return {
+            'PhysicalResourceId': event.get('PhysicalResourceId', f'failed-{context.request_id}'),
+            'Data': {
+                'ConfigurationStatus': 'FAILED',
+                'ErrorMessage': str(e),
+                'ProcessingTimeSeconds': processing_time
+            }
+        }
 
 
 def get_organization_accounts():
@@ -369,6 +403,40 @@ def create_cross_account_dashboards():
         )
     
     print("Created cross-account dashboards")
+
+
+def cleanup_detectors():
+    """
+    Clean up detectors during stack deletion
+    """
+    try:
+        # List all detectors
+        detectors_response = opensearch_request('GET', '/_plugins/_anomaly_detection/detectors')
+        detectors = detectors_response.get('detectors', [])
+        
+        # Find multi-account detectors
+        multi_account_detectors = [d for d in detectors if 'multi-account' in d.get('name', '')]
+        
+        for detector in multi_account_detectors:
+            detector_id = detector['_id']
+            detector_name = detector['name']
+            
+            try:
+                # Stop the detector
+                opensearch_request('POST', f'/_plugins/_anomaly_detection/detectors/{detector_id}/_stop')
+                print(f"Stopped detector {detector_name}")
+                
+                # Delete the detector
+                opensearch_request('DELETE', f'/_plugins/_anomaly_detection/detectors/{detector_id}')
+                print(f"Deleted detector {detector_name}")
+                
+            except Exception as e:
+                print(f"Error cleaning up detector {detector_name}: {str(e)}")
+        
+        print(f"Cleanup completed for {len(multi_account_detectors)} detectors")
+        
+    except Exception as e:
+        print(f"Error during cleanup: {str(e)}")
 
 
 def opensearch_request(method, path, body=None):

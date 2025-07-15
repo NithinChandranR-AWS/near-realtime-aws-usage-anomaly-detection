@@ -20,30 +20,59 @@ deployment_mode = app.node.try_get_context("deployment-mode") or "single-account
 if deployment_mode == "multi-account":
     print("Deploying in multi-account mode with enhanced features...")
     
-    # Deploy organization trail stack (in management account)
-    org_trail_stack = OrganizationTrailStack(
-        app,
-        "OrganizationTrailStack",
-        description="Organization-wide CloudTrail for multi-account anomaly detection"
-    )
+    # Check if we should use existing organization trail
+    use_existing_trail = app.node.try_get_context("use-existing-trail") or False
     
-    # Deploy the base anomaly detector stack
-    base_stack = UsageAnomalyDetectorStack(
-        app,
-        "EnhancedUsageAnomalyDetectorStack",
-        description="Enhanced AWS usage anomaly detector with multi-account support"
-    )
-    
-    # Deploy enhanced anomaly detector with multi-account support
-    enhanced_stack = EnhancedAnomalyDetectorStack(
-        app,
-        "MultiAccountAnomalyStack",
-        log_group=org_trail_stack.log_group,
-        opensearch_domain=base_stack.domain if hasattr(base_stack, 'domain') else None,
-        description="Multi-account anomaly detection with natural language insights"
-    )
-    enhanced_stack.add_dependency(org_trail_stack)
-    enhanced_stack.add_dependency(base_stack)
+    if use_existing_trail:
+        print("Using existing organization trail...")
+        # Import existing log group
+        from aws_cdk import aws_logs as logs
+        existing_log_group = logs.LogGroup.from_log_group_name(
+            app, "ExistingOrgTrailLogGroup", 
+            "aws-cloudtrail-logs-764710143902-caec8952"
+        )
+        
+        # Deploy the base anomaly detector stack
+        base_stack = UsageAnomalyDetectorStack(
+            app,
+            "EnhancedUsageAnomalyDetectorStack",
+            description="Enhanced AWS usage anomaly detector with multi-account support"
+        )
+        
+        # Deploy enhanced anomaly detector with multi-account support using existing trail
+        enhanced_stack = EnhancedAnomalyDetectorStack(
+            app,
+            "MultiAccountAnomalyStack",
+            log_group=existing_log_group,
+            opensearch_domain=getattr(base_stack, 'domain', None),
+            description="Multi-account anomaly detection with natural language insights"
+        )
+        enhanced_stack.add_dependency(base_stack)
+    else:
+        # Deploy organization trail stack (in management account)
+        org_trail_stack = OrganizationTrailStack(
+            app,
+            "OrganizationTrailStack",
+            description="Organization-wide CloudTrail for multi-account anomaly detection"
+        )
+        
+        # Deploy the base anomaly detector stack
+        base_stack = UsageAnomalyDetectorStack(
+            app,
+            "EnhancedUsageAnomalyDetectorStack",
+            description="Enhanced AWS usage anomaly detector with multi-account support"
+        )
+        
+        # Deploy enhanced anomaly detector with multi-account support
+        enhanced_stack = EnhancedAnomalyDetectorStack(
+            app,
+            "MultiAccountAnomalyStack",
+            log_group=org_trail_stack.log_group,
+            opensearch_domain=getattr(base_stack, 'domain', None),
+            description="Multi-account anomaly detection with natural language insights"
+        )
+        enhanced_stack.add_dependency(org_trail_stack)
+        enhanced_stack.add_dependency(base_stack)
     
     # Deploy Amazon Q for Business stack if available
     if q_business_available and hasattr(enhanced_stack, 'q_connector_function'):

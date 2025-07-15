@@ -8,7 +8,7 @@ import hashlib
 import time
 
 # Environment variables
-OPENSEARCH_HOST = os.environ.get('OPENSEARCH_HOST')
+OPENSEARCH_HOST = os.environ.get('OPENSEARCH_ENDPOINT', os.environ.get('OPENSEARCH_HOST'))
 Q_APPLICATION_ID = os.environ.get('Q_APPLICATION_ID')
 Q_INDEX_ID = os.environ.get('Q_INDEX_ID')
 SYNC_INTERVAL_MINUTES = int(os.environ.get('SYNC_INTERVAL_MINUTES', '15'))

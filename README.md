@@ -48,6 +48,36 @@ The primary components of the solution's architecture are:
 The above commands will also download the python libraries for the lambda layer.
 
 ## Deployment
+
+### Enhanced Multi-Account Deployment (Recommended)
+
+For organization-wide anomaly detection with Amazon Q for Business integration:
+
+```bash
+# Quick deployment with enhanced script
+./deploy_multi_account_enhanced.sh -e your-email@company.com -r us-east-1
+
+# Or manual deployment
+cdk deploy --app "python3 app_enhanced_test.py" \
+  --context deployment-mode=multi-account \
+  --context opensearch-version=OPENSEARCH_2_9 \
+  --context enable-lambda-trail=true \
+  --parameters EnhancedUsageAnomalyDetectorStack:opensearchalertemail=your-email@company.com \
+  --all \
+  --require-approval never
+```
+
+**Enhanced Features:**
+- 🏢 **Multi-Account Support**: Monitor anomalies across your entire AWS Organization
+- 🤖 **Amazon Q Integration**: Natural language insights and recommendations
+- 📊 **Advanced Analytics**: Cross-account correlation and cost impact analysis
+- 🔍 **Enhanced Detection**: High-cardinality anomaly detection with account categorization
+- 📈 **Rich Dashboards**: Organization-wide visibility and reporting
+
+See [ENHANCED_DEPLOYMENT_GUIDE.md](./ENHANCED_DEPLOYMENT_GUIDE.md) for detailed instructions.
+
+### Single-Account Deployment (Legacy)
+
 - Deploy complete stack:  
 
     ```

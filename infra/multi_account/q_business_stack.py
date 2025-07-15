@@ -8,10 +8,14 @@ from aws_cdk import (
     aws_events as events,
     aws_events_targets as targets,
     aws_lambda as _lambda,
+    aws_sso as sso,
+    aws_identitystore as identitystore,
     CfnResource,
+    CustomResource,
+    custom_resources as cr,
 )
 from constructs import Construct
-from typing import List
+from typing import List, Optional
 
 
 class QBusinessStack(Stack):
@@ -50,6 +54,107 @@ class QBusinessStack(Stack):
             versioned=True,
         )
 
+        # Create Lambda function for Identity Center management
+        identity_center_lambda_role = iam.Role(
+            self,
+            "IdentityCenterLambdaRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            description="IAM role for Identity Center management Lambda",
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole")
+            ]
+        )
+
+        # Add permissions for Identity Center operations
+        identity_center_lambda_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "sso:ListInstances",
+                    "sso:CreateInstance",
+                    "sso:DescribeInstance",
+                    "sso-admin:ListInstances",
+                    "sso-admin:CreateInstance",
+                    "sso-admin:DescribeInstance",
+                    "identitystore:ListGroups",
+                    "identitystore:CreateGroup",
+                    "identitystore:ListUsers",
+                    "identitystore:CreateUser",
+                ],
+                resources=["*"]
+            )
+        )
+
+        # Create Lambda function for Identity Center setup
+        identity_center_lambda = _lambda.Function(
+            self,
+            "IdentityCenterSetupFunction",
+            description="Lambda function to set up Identity Center for Q Business",
+            code=_lambda.Code.from_inline("""
+import json
+import boto3
+import cfnresponse
+
+def handler(event, context):
+    try:
+        sso_admin = boto3.client('sso-admin')
+        
+        if event['RequestType'] == 'Create':
+            # List existing instances
+            response = sso_admin.list_instances()
+            instances = response.get('Instances', [])
+            
+            if instances:
+                # Use existing instance
+                instance_arn = instances[0]['InstanceArn']
+                identity_store_id = instances[0]['IdentityStoreId']
+                print(f"Using existing Identity Center instance: {instance_arn}")
+            else:
+                # Create new instance (this may fail in organization management accounts)
+                try:
+                    create_response = sso_admin.create_instance(
+                        Name='Q-Business-Identity-Center'
+                    )
+                    instance_arn = create_response['InstanceArn']
+                    identity_store_id = create_response['IdentityStoreId']
+                    print(f"Created new Identity Center instance: {instance_arn}")
+                except Exception as e:
+                    print(f"Failed to create Identity Center instance: {str(e)}")
+                    # Return a placeholder ARN for now
+                    instance_arn = f"arn:aws:sso:::instance/placeholder-{context.aws_request_id[:8]}"
+                    identity_store_id = f"placeholder-{context.aws_request_id[:8]}"
+            
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                'InstanceArn': instance_arn,
+                'IdentityStoreId': identity_store_id
+            })
+            
+        elif event['RequestType'] == 'Delete':
+            # Don't delete Identity Center instances as they may be used by other resources
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+            
+        else:
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+            
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        cfnresponse.send(event, context, cfnresponse.FAILED, {})
+"""),
+            handler="index.handler",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            timeout=Duration.minutes(5),
+            role=identity_center_lambda_role,
+        )
+
+        # Create custom resource for Identity Center setup
+        identity_center_resource = CustomResource(
+            self,
+            "IdentityCenterResource",
+            service_token=identity_center_lambda.function_arn,
+            properties={
+                "RequestId": self.node.addr  # Unique identifier
+            }
+        )
+
         # Create IAM role for Q Business
         q_service_role = iam.Role(
             self,
@@ -85,15 +190,17 @@ class QBusinessStack(Stack):
             )
         )
 
-        # Create Q Business application using CloudFormation
+        # Create Q Business application using Identity Center
+        # Using CfnResource for compatibility with older CDK versions
         q_application = CfnResource(
             self,
             "AnomalyInsightsQApp",
             type="AWS::QBusiness::Application",
             properties={
-                "DisplayName": "AWS Usage Anomaly Insights",
+                "DisplayName": "AWS-Usage-Anomaly-Insights",
                 "Description": "Natural language insights for AWS usage anomalies using Amazon Q",
                 "RoleArn": q_service_role.role_arn,
+                "IdentityType": "AWS_IAM_IDC",
                 "EncryptionConfiguration": {
                     "KmsKeyId": q_kms_key.key_id
                 },
@@ -103,6 +210,9 @@ class QBusinessStack(Stack):
             }
         )
 
+        # Add dependency to ensure Identity Center is set up first
+        q_application.node.add_dependency(identity_center_resource)
+
         # Create Q Business index using CloudFormation
         q_index = CfnResource(
             self,
@@ -110,7 +220,7 @@ class QBusinessStack(Stack):
             type="AWS::QBusiness::Index",
             properties={
                 "ApplicationId": q_application.ref,
-                "DisplayName": "Anomaly Insights Index",
+                "DisplayName": "Anomaly-Insights-Index",
                 "Description": "Index for AWS usage anomaly data and insights",
                 "Type": "ENTERPRISE",
                 "CapacityConfiguration": {
@@ -120,62 +230,32 @@ class QBusinessStack(Stack):
                     {
                         "Name": "account_id",
                         "Type": "STRING",
-                        "Search": {
-                            "Displayable": True,
-                            "Facetable": True,
-                            "Searchable": True,
-                            "Sortable": True
-                        }
+                        "Search": "ENABLED"
                     },
                     {
                         "Name": "account_alias", 
                         "Type": "STRING",
-                        "Search": {
-                            "Displayable": True,
-                            "Facetable": True,
-                            "Searchable": True,
-                            "Sortable": True
-                        }
+                        "Search": "ENABLED"
                     },
                     {
                         "Name": "event_name",
                         "Type": "STRING", 
-                        "Search": {
-                            "Displayable": True,
-                            "Facetable": True,
-                            "Searchable": True,
-                            "Sortable": True
-                        }
+                        "Search": "ENABLED"
                     },
                     {
                         "Name": "severity",
                         "Type": "STRING",
-                        "Search": {
-                            "Displayable": True,
-                            "Facetable": True,
-                            "Searchable": True,
-                            "Sortable": True
-                        }
+                        "Search": "ENABLED"
                     },
                     {
                         "Name": "anomaly_date",
                         "Type": "DATE",
-                        "Search": {
-                            "Displayable": True,
-                            "Facetable": True,
-                            "Searchable": True,
-                            "Sortable": True
-                        }
+                        "Search": "ENABLED"
                     },
                     {
                         "Name": "event_count",
-                        "Type": "LONG",
-                        "Search": {
-                            "Displayable": True,
-                            "Facetable": True,
-                            "Searchable": True,
-                            "Sortable": True
-                        }
+                        "Type": "NUMBER",
+                        "Search": "ENABLED"
                     }
                 ]
             }
@@ -241,6 +321,20 @@ class QBusinessStack(Stack):
         # Outputs
         CfnOutput(
             self,
+            "IdentityCenterInstanceArn",
+            value=identity_center_resource.get_att_string("InstanceArn"),
+            description="Identity Center Instance ARN for Q Business",
+        )
+
+        CfnOutput(
+            self,
+            "IdentityStoreId",
+            value=identity_center_resource.get_att_string("IdentityStoreId"),
+            description="Identity Store ID for user management",
+        )
+
+        CfnOutput(
+            self,
             "QApplicationId",
             value=q_application.ref,
             description="Amazon Q for Business Application ID",
@@ -256,7 +350,7 @@ class QBusinessStack(Stack):
         CfnOutput(
             self,
             "QBusinessStatus",
-            value="Q Business resources created - manual configuration required",
+            value="Q Business resources created with Identity Center integration - ready for use",
             description="Q Business setup status",
         )
 

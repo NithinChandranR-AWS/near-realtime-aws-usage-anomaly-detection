@@ -2,6 +2,18 @@
 Utility to check Q Business availability in current CDK version.
 """
 
+def get_cdk_version():
+    """Get the current CDK version."""
+    try:
+        import aws_cdk_lib
+        return getattr(aws_cdk_lib, '__version__', 'unknown')
+    except ImportError:
+        try:
+            import aws_cdk
+            return getattr(aws_cdk, '__version__', 'unknown')
+        except ImportError:
+            return 'unknown'
+
 def is_q_business_available():
     """Check if aws_qbusiness module is available."""
     try:
@@ -14,7 +26,8 @@ def is_q_business_available():
 
 def get_q_business_status():
     """Get Q Business availability status message."""
+    current_version = get_cdk_version()
     if is_q_business_available():
-        return "✅ Q Business Integration: Enabled - Natural language insights active"
+        return f"✅ Q Business Integration: Enabled - Natural language insights active (CDK v{current_version})"
     else:
-        return "⚠️  Q Business Integration: Disabled (requires CDK v2.110.0+, current: v2.103.1)"
+        return f"⚠️  Q Business Integration: Disabled (requires CDK v2.110.0+, current: v{current_version})"

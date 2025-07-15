@@ -1,23 +1,50 @@
 const zlib = require('zlib');
 const crypto = require('crypto');
+const AWS = require('aws-sdk');
 
 // OpenSearch client setup
 const endpoint = process.env.OPENSEARCH_DOMAIN_ENDPOINT;
 const enableAccountEnrichment = process.env.ENABLE_ACCOUNT_ENRICHMENT === 'true';
 const enableOrgContext = process.env.ENABLE_ORG_CONTEXT === 'true';
 
+// AWS clients
+const organizations = new AWS.Organizations();
+const cloudwatch = new AWS.CloudWatch();
+
 // Account metadata cache (in production, use DynamoDB or ElastiCache)
 const accountMetadataCache = new Map();
 
+// Metrics tracking
+const metrics = {
+    processedEvents: 0,
+    failedEvents: 0,
+    enrichedAccounts: new Set(),
+    errors: []
+};
+
+function resetMetrics() {
+    metrics.processedEvents = 0;
+    metrics.failedEvents = 0;
+    metrics.enrichedAccounts = new Set();
+    metrics.errors = [];
+}
+
 exports.handler = async (event, context) => {
-    const payload = Buffer.from(event.awslogs.data, 'base64');
-    const parsed = JSON.parse(zlib.gunzipSync(payload).toString('utf8'));
+    const startTime = Date.now();
     
-    console.log('Processing logs from account:', parsed.owner);
-    console.log('Log group:', parsed.logGroup);
-    console.log('Log stream:', parsed.logStream);
-    
-    const bulkRequestBody = [];
+    try {
+        // Reset metrics for this invocation
+        resetMetrics();
+        
+        const payload = Buffer.from(event.awslogs.data, 'base64');
+        const parsed = JSON.parse(zlib.gunzipSync(payload).toString('utf8'));
+        
+        console.log('Processing logs from account:', parsed.owner);
+        console.log('Log group:', parsed.logGroup);
+        console.log('Log stream:', parsed.logStream);
+        console.log('Total log events:', parsed.logEvents.length);
+        
+        const bulkRequestBody = [];
     
     for (const logEvent of parsed.logEvents) {
         try {
@@ -29,39 +56,46 @@ exports.handler = async (event, context) => {
             }
             
             for (const record of cloudTrailRecord.Records) {
-                // Enhance record with multi-account context
-                if (enableAccountEnrichment) {
-                    await enrichWithAccountContext(record);
+                try {
+                    // Enhance record with multi-account context
+                    if (enableAccountEnrichment) {
+                        await enrichWithAccountContext(record);
+                        enrichedAccounts.add(record.recipientAccountId);
+                    }
+                    
+                    // Add organization context
+                    if (enableOrgContext) {
+                        await enrichWithOrgContext(record);
+                    }
+                    
+                    // Create document ID including account ID for uniqueness
+                    const id = crypto.createHash('sha256')
+                        .update(`${record.recipientAccountId}-${record.eventID}`)
+                        .digest('hex');
+                    
+                    const action = { index: { _id: id } };
+                    const document = {
+                        ...record,
+                        // Add enhanced fields
+                        '@timestamp': new Date(record.eventTime).toISOString(),
+                        'accountAlias': record.accountAlias || record.recipientAccountId,
+                        'organizationId': record.organizationId || 'unknown',
+                        'organizationalUnit': record.organizationalUnit || 'unknown',
+                        'accountType': record.accountType || 'unknown', // dev/staging/prod
+                        'costCenter': record.costCenter || 'unknown',
+                        // Add search-friendly fields
+                        'eventNameKeyword': record.eventName,
+                        'userIdentityType': record.userIdentity?.type || 'unknown',
+                        'sourceIPAddress': record.sourceIPAddress || 'unknown'
+                    };
+                    
+                    bulkRequestBody.push(action);
+                    bulkRequestBody.push(document);
+                    processedEvents++;
+                } catch (recordError) {
+                    console.error(`Error processing record ${record.eventID}:`, recordError);
+                    failedEvents++;
                 }
-                
-                // Add organization context
-                if (enableOrgContext) {
-                    await enrichWithOrgContext(record);
-                }
-                
-                // Create document ID including account ID for uniqueness
-                const id = crypto.createHash('sha256')
-                    .update(`${record.recipientAccountId}-${record.eventID}`)
-                    .digest('hex');
-                
-                const action = { index: { _id: id } };
-                const document = {
-                    ...record,
-                    // Add enhanced fields
-                    '@timestamp': new Date(record.eventTime).toISOString(),
-                    'accountAlias': record.accountAlias || record.recipientAccountId,
-                    'organizationId': record.organizationId || 'unknown',
-                    'organizationalUnit': record.organizationalUnit || 'unknown',
-                    'accountType': record.accountType || 'unknown', // dev/staging/prod
-                    'costCenter': record.costCenter || 'unknown',
-                    // Add search-friendly fields
-                    'eventNameKeyword': record.eventName,
-                    'userIdentityType': record.userIdentity?.type || 'unknown',
-                    'sourceIPAddress': record.sourceIPAddress || 'unknown'
-                };
-                
-                bulkRequestBody.push(action);
-                bulkRequestBody.push(document);
             }
         } catch (error) {
             console.error('Error processing log event:', error);
@@ -69,13 +103,48 @@ exports.handler = async (event, context) => {
         }
     }
     
-    if (bulkRequestBody.length > 0) {
-        const response = await postToOpenSearch(bulkRequestBody);
-        console.log(`Successfully indexed ${bulkRequestBody.length / 2} documents`);
-        return response;
+        if (bulkRequestBody.length > 0) {
+            const response = await postToOpenSearch(bulkRequestBody);
+            const processingTime = Date.now() - startTime;
+            
+            console.log(`Processing Summary:`);
+            console.log(`  - Documents indexed: ${bulkRequestBody.length / 2}`);
+            console.log(`  - Events processed: ${processedEvents}`);
+            console.log(`  - Events failed: ${failedEvents}`);
+            console.log(`  - Accounts enriched: ${enrichedAccounts.size}`);
+            console.log(`  - Processing time: ${processingTime}ms`);
+            
+            return {
+                statusCode: 200,
+                documentsIndexed: bulkRequestBody.length / 2,
+                eventsProcessed: processedEvents,
+                eventsFailed: failedEvents,
+                accountsEnriched: enrichedAccounts.size,
+                processingTimeMs: processingTime
+            };
+        }
+        
+        console.log('No CloudTrail events to process');
+        return {
+            statusCode: 200,
+            message: 'No CloudTrail events to process',
+            eventsProcessed: 0
+        };
+        
+    } catch (error) {
+        const processingTime = Date.now() - startTime;
+        console.error('Fatal error in Lambda handler:', error);
+        console.error(`Processing failed after ${processingTime}ms`);
+        
+        // Return error response instead of throwing to avoid Lambda retries
+        return {
+            statusCode: 500,
+            error: error.message,
+            eventsProcessed: processedEvents,
+            eventsFailed: failedEvents,
+            processingTimeMs: processingTime
+        };
     }
-    
-    return 'No CloudTrail events to process';
 };
 
 async function enrichWithAccountContext(record) {
@@ -88,16 +157,106 @@ async function enrichWithAccountContext(record) {
         return;
     }
     
-    // In production, fetch from AWS Organizations API or a metadata store
-    // For now, we'll add placeholder enrichment
-    const metadata = {
-        accountAlias: await getAccountAlias(accountId),
-        accountType: await getAccountType(accountId),
-        costCenter: await getCostCenter(accountId)
-    };
+    try {
+        // Fetch account metadata with retry logic
+        const metadata = await fetchAccountMetadataWithRetry(accountId);
+        accountMetadataCache.set(accountId, metadata);
+        Object.assign(record, metadata);
+    } catch (error) {
+        console.error(`Failed to enrich account ${accountId}:`, error);
+        // Use fallback metadata
+        const fallbackMetadata = {
+            accountAlias: `account-${accountId}`,
+            accountType: 'unknown',
+            costCenter: 'unknown'
+        };
+        accountMetadataCache.set(accountId, fallbackMetadata);
+        Object.assign(record, fallbackMetadata);
+    }
+}
+
+async function fetchAccountMetadataWithRetry(accountId, maxRetries = 3) {
+    const AWS = require('aws-sdk');
+    const organizations = new AWS.Organizations();
     
-    accountMetadataCache.set(accountId, metadata);
-    Object.assign(record, metadata);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            // Try to get account details from Organizations API
+            const accountDetails = await organizations.describeAccount({
+                AccountId: accountId
+            }).promise();
+            
+            // Get account tags for additional metadata
+            let tags = {};
+            try {
+                const tagResponse = await organizations.listTagsForResource({
+                    ResourceId: accountId
+                }).promise();
+                
+                tags = tagResponse.Tags.reduce((acc, tag) => {
+                    acc[tag.Key] = tag.Value;
+                    return acc;
+                }, {});
+            } catch (tagError) {
+                console.warn(`Could not fetch tags for account ${accountId}:`, tagError.message);
+            }
+            
+            return {
+                accountAlias: tags.Name || accountDetails.Account.Name || `account-${accountId}`,
+                accountType: tags.Environment || tags.Type || determineAccountType(accountDetails.Account.Name),
+                costCenter: tags.CostCenter || tags.Team || 'unknown',
+                organizationalUnit: await getAccountOU(accountId)
+            };
+            
+        } catch (error) {
+            console.warn(`Attempt ${attempt} failed for account ${accountId}:`, error.message);
+            
+            if (attempt === maxRetries) {
+                throw error;
+            }
+            
+            // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        }
+    }
+}
+
+async function getAccountOU(accountId) {
+    const AWS = require('aws-sdk');
+    const organizations = new AWS.Organizations();
+    
+    try {
+        const parents = await organizations.listParents({
+            ChildId: accountId
+        }).promise();
+        
+        if (parents.Parents && parents.Parents.length > 0) {
+            const parentId = parents.Parents[0].Id;
+            if (parentId.startsWith('ou-')) {
+                const ou = await organizations.describeOrganizationalUnit({
+                    OrganizationalUnitId: parentId
+                }).promise();
+                return ou.OrganizationalUnit.Name;
+            }
+        }
+        return 'Root';
+    } catch (error) {
+        console.warn(`Could not determine OU for account ${accountId}:`, error.message);
+        return 'unknown';
+    }
+}
+
+function determineAccountType(accountName) {
+    if (!accountName) return 'unknown';
+    
+    const name = accountName.toLowerCase();
+    if (name.includes('prod') || name.includes('production')) return 'production';
+    if (name.includes('stag') || name.includes('staging')) return 'staging';
+    if (name.includes('dev') || name.includes('development')) return 'development';
+    if (name.includes('test') || name.includes('testing')) return 'testing';
+    if (name.includes('sandbox') || name.includes('sb')) return 'sandbox';
+    
+    return 'unknown';
 }
 
 async function enrichWithOrgContext(record) {
@@ -136,48 +295,79 @@ async function getOrganizationalUnit(accountId) {
     return 'ou-root-workloads'; // placeholder
 }
 
-async function postToOpenSearch(body) {
+async function postToOpenSearch(body, maxRetries = 3) {
     const https = require('https');
     const aws4 = require('aws4');
     
     const requestBody = body.map(JSON.stringify).join('\n') + '\n';
     
-    const options = {
-        host: endpoint,
-        path: '/cwl-multiaccounts/_bulk',
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-ndjson',
-            'Content-Length': Buffer.byteLength(requestBody)
-        },
-        body: requestBody
-    };
-    
-    // Sign the request with AWS credentials
-    aws4.sign(options, {
-        service: 'es',
-        region: process.env.AWS_REGION || 'us-east-1'
-    });
-    
-    return new Promise((resolve, reject) => {
-        const req = https.request(options, (res) => {
-            let responseBody = '';
-            res.on('data', (chunk) => responseBody += chunk);
-            res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    try {
-                        resolve(JSON.parse(responseBody));
-                    } catch (e) {
-                        resolve({ acknowledged: true });
-                    }
-                } else {
-                    reject(new Error(`OpenSearch returned status ${res.statusCode}: ${responseBody}`));
-                }
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const options = {
+                host: endpoint,
+                path: '/cwl-multiaccounts/_bulk',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-ndjson',
+                    'Content-Length': Buffer.byteLength(requestBody)
+                },
+                body: requestBody,
+                timeout: 30000 // 30 second timeout
+            };
+            
+            // Sign the request with AWS credentials
+            aws4.sign(options, {
+                service: 'es',
+                region: process.env.AWS_REGION || 'us-east-1'
             });
-        });
-        
-        req.on('error', reject);
-        req.write(requestBody);
-        req.end();
-    });
+            
+            const result = await new Promise((resolve, reject) => {
+                const req = https.request(options, (res) => {
+                    let responseBody = '';
+                    res.on('data', (chunk) => responseBody += chunk);
+                    res.on('end', () => {
+                        if (res.statusCode >= 200 && res.statusCode < 300) {
+                            try {
+                                const parsed = JSON.parse(responseBody);
+                                // Check for partial failures in bulk response
+                                if (parsed.errors) {
+                                    console.warn('Some documents failed to index:', parsed.items?.filter(item => item.index?.error));
+                                }
+                                resolve(parsed);
+                            } catch (e) {
+                                console.warn('Could not parse OpenSearch response, assuming success');
+                                resolve({ acknowledged: true, errors: false });
+                            }
+                        } else {
+                            reject(new Error(`OpenSearch returned status ${res.statusCode}: ${responseBody}`));
+                        }
+                    });
+                });
+                
+                req.on('error', reject);
+                req.on('timeout', () => {
+                    req.destroy();
+                    reject(new Error('Request timeout'));
+                });
+                
+                req.write(requestBody);
+                req.end();
+            });
+            
+            return result;
+            
+        } catch (error) {
+            console.warn(`OpenSearch request attempt ${attempt} failed:`, error.message);
+            
+            if (attempt === maxRetries) {
+                console.error(`All ${maxRetries} attempts failed. Last error:`, error);
+                throw error;
+            }
+            
+            // Exponential backoff with jitter
+            const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 1000, 10000);
+            console.log(`Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
 }
