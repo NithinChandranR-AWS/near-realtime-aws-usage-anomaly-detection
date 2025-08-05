@@ -50,7 +50,8 @@ class OrganizationTrailStack(Stack):
         org_trail_bucket = s3.Bucket(
             self,
             "OrganizationTrailBucket",
-            bucket_name=f"org-trail-{self.account}-{self.region}",
+            # Remove explicit bucket name to let CDK generate unique name
+            # bucket_name=f"org-trail-{self.account}-{self.region}",
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=s3.BucketEncryption.KMS,
             encryption_key=trail_key,
@@ -75,13 +76,18 @@ class OrganizationTrailStack(Stack):
             ],
         )
 
-        # Add bucket policy for organization trail
+        # Add comprehensive bucket policy for organization trail
         org_trail_bucket.add_to_resource_policy(
             iam.PolicyStatement(
                 sid="AWSCloudTrailAclCheck",
-                actions=["s3:GetBucketAcl"],
+                actions=["s3:GetBucketAcl", "s3:ListBucket"],
                 resources=[org_trail_bucket.bucket_arn],
                 principals=[iam.ServicePrincipal("cloudtrail.amazonaws.com")],
+                conditions={
+                    "StringEquals": {
+                        "AWS:SourceArn": f"arn:aws:cloudtrail:{self.region}:{self.account}:trail/*"
+                    }
+                }
             )
         )
 
@@ -92,7 +98,43 @@ class OrganizationTrailStack(Stack):
                 resources=[f"{org_trail_bucket.bucket_arn}/*"],
                 principals=[iam.ServicePrincipal("cloudtrail.amazonaws.com")],
                 conditions={
-                    "StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control"}
+                    "StringEquals": {
+                        "s3:x-amz-acl": "bucket-owner-full-control",
+                        "AWS:SourceArn": f"arn:aws:cloudtrail:{self.region}:{self.account}:trail/*"
+                    }
+                },
+            )
+        )
+
+        # Add policy for organization trail access
+        org_trail_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AWSCloudTrailOrganizationWrite",
+                actions=["s3:PutObject"],
+                resources=[f"{org_trail_bucket.bucket_arn}/AWSLogs/{self.account}/*"],
+                principals=[iam.ServicePrincipal("cloudtrail.amazonaws.com")],
+                conditions={
+                    "StringEquals": {
+                        "s3:x-amz-acl": "bucket-owner-full-control"
+                    }
+                },
+            )
+        )
+
+        # Add policy for organization member accounts
+        org_trail_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AWSCloudTrailOrganizationMemberWrite",
+                actions=["s3:PutObject"],
+                resources=[f"{org_trail_bucket.bucket_arn}/AWSLogs/*/*"],
+                principals=[iam.ServicePrincipal("cloudtrail.amazonaws.com")],
+                conditions={
+                    "StringEquals": {
+                        "s3:x-amz-acl": "bucket-owner-full-control"
+                    },
+                    "ForAllValues:StringEquals": {
+                        "aws:PrincipalOrgID": "${aws:PrincipalOrgID}"
+                    }
                 },
             )
         )

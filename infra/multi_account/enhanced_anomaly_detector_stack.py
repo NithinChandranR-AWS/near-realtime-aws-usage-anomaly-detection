@@ -3,13 +3,16 @@ from aws_cdk import (
     Stack,
     Duration,
     CfnOutput,
+    RemovalPolicy,
     aws_opensearchservice as opensearch,
     aws_ec2 as ec2,
     aws_iam as iam,
     aws_lambda as _lambda,
     aws_logs as logs,
     aws_logs_destinations as destinations,
+    aws_dynamodb as dynamodb,
     CustomResource,
+    custom_resources as cr,
 )
 from constructs import Construct
 
@@ -33,6 +36,49 @@ class EnhancedAnomalyDetectorStack(Stack):
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        # Create DynamoDB table for account metadata cache
+        account_cache_table = dynamodb.Table(
+            self,
+            "AccountMetadataCache",
+            table_name="account-metadata-cache",
+            partition_key=dynamodb.Attribute(
+                name="accountId",
+                type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.DESTROY,
+            time_to_live_attribute="ttl",
+            point_in_time_recovery=True,
+            encryption=dynamodb.TableEncryption.AWS_MANAGED,
+            stream=dynamodb.StreamViewType.NEW_AND_OLD_IMAGES
+        )
+        
+        # Add GSI for querying by account type
+        account_cache_table.add_global_secondary_index(
+            index_name="AccountTypeIndex",
+            partition_key=dynamodb.Attribute(
+                name="accountType",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="lastUpdated",
+                type=dynamodb.AttributeType.STRING
+            )
+        )
+        
+        # Add GSI for querying by organizational unit
+        account_cache_table.add_global_secondary_index(
+            index_name="OrganizationalUnitIndex",
+            partition_key=dynamodb.Attribute(
+                name="organizationalUnit",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="lastUpdated",
+                type=dynamodb.AttributeType.STRING
+            )
+        )
 
         # Enhanced CloudWatch to OpenSearch Lambda for multi-account support
         multi_account_logs_lambda_role = iam.Role(
@@ -60,6 +106,49 @@ class EnhancedAnomalyDetectorStack(Stack):
             )
         )
 
+        # Add DynamoDB permissions for account cache
+        multi_account_logs_lambda_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:DeleteItem",
+                    "dynamodb:Query",
+                    "dynamodb:Scan",
+                ],
+                resources=[
+                    account_cache_table.table_arn,
+                    f"{account_cache_table.table_arn}/index/*"
+                ],
+            )
+        )
+
+        # Add Organizations permissions for account enrichment
+        multi_account_logs_lambda_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "organizations:ListAccounts",
+                    "organizations:DescribeAccount",
+                    "organizations:ListTagsForResource",
+                    "organizations:ListParents",
+                    "organizations:DescribeOrganizationalUnit",
+                    "organizations:DescribeOrganization",
+                ],
+                resources=["*"],
+            )
+        )
+
+        # Add CloudWatch permissions for metrics
+        multi_account_logs_lambda_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "cloudwatch:PutMetricData",
+                ],
+                resources=["*"],
+            )
+        )
+
         # Enhanced logs processing function with account awareness
         multi_account_logs_function = _lambda.Function(
             self,
@@ -77,6 +166,8 @@ class EnhancedAnomalyDetectorStack(Stack):
                 "OPENSEARCH_DOMAIN_ENDPOINT": opensearch_domain.domain_endpoint,
                 "ENABLE_ACCOUNT_ENRICHMENT": "true",
                 "ENABLE_ORG_CONTEXT": "true",
+                "ACCOUNT_CACHE_TABLE": account_cache_table.table_name,
+                "CACHE_TTL_HOURS": "24",
             },
         )
 
@@ -127,12 +218,19 @@ class EnhancedAnomalyDetectorStack(Stack):
             )
         )
 
+        # Create provider for custom resource
+        cross_account_config_provider = cr.Provider(
+            self,
+            "CrossAccountAnomalyConfigProvider",
+            on_event_handler=cross_account_config_function,
+            log_retention=logs.RetentionDays.ONE_DAY
+        )
+
         # Create custom resource to configure multi-account anomaly detectors
-        # Note: Using a simplified approach since Provider construct may not be available
         CustomResource(
             self,
             "CrossAccountAnomalyConfig",
-            service_token=cross_account_config_function.function_arn,
+            service_token=cross_account_config_provider.service_token,
             properties={
                 "action": "configure_multi_account_detectors",
                 "detectors": [
@@ -284,7 +382,15 @@ class EnhancedAnomalyDetectorStack(Stack):
             description="ARN of Natural Language Insights function",
         )
 
+        CfnOutput(
+            self,
+            "AccountCacheTableName",
+            value=account_cache_table.table_name,
+            description="Name of the account metadata cache table",
+        )
+
         # Store references
         self.logs_function = multi_account_logs_function
         self.q_connector_function = q_connector_function
         self.nl_insights_function = nl_insights_function
+        self.account_cache_table = account_cache_table

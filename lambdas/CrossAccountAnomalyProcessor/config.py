@@ -1,472 +1,413 @@
+#!/usr/bin/env python3
+"""
+Cross-Account Anomaly Configuration Handler
+
+This Lambda function configures OpenSearch anomaly detectors for multi-account
+CloudTrail log analysis with account-specific categorization.
+"""
+
 import json
 import os
-import boto3  # type: ignore
+import boto3
 import requests
-from requests.auth import HTTPBasicAuth
-import time
-import traceback
-from datetime import datetime
+from requests_aws4auth import AWS4Auth
+import logging
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 # Environment variables
 OPENSEARCH_HOST = os.environ.get('OPENSEARCH_HOST')
-ENABLE_MULTI_ACCOUNT = os.environ.get('ENABLE_MULTI_ACCOUNT', 'true').lower() == 'true'
-AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+ENABLE_MULTI_ACCOUNT = os.environ.get('ENABLE_MULTI_ACCOUNT', 'false').lower() == 'true'
 
-# Initialize AWS clients
-organizations = boto3.client('organizations')
-
+# AWS clients
+session = boto3.Session()
+credentials = session.get_credentials()
+region = session.region_name or 'us-east-1'
+service = 'es'
+awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, region, service, session_token=credentials.token)
 
 def handler(event, context):
     """
-    Lambda handler to configure multi-account anomaly detectors
+    CloudFormation custom resource handler for configuring multi-account anomaly detectors
     """
-    start_time = datetime.utcnow()
-    print(f"Starting multi-account detector configuration at {start_time}")
-    print(f"Event: {json.dumps(event, default=str)}")
+    logger.info(f"Received event: {json.dumps(event, default=str)}")
     
-    request_type = event.get('RequestType', 'Create')
+    request_type = event.get('RequestType')
+    properties = event.get('ResourceProperties', {})
     
     try:
-        if request_type in ['Create', 'Update']:
-            # Get organization accounts
-            print("Fetching organization accounts...")
-            accounts = get_organization_accounts()
-            print(f"Found {len(accounts)} accounts in organization")
-            
-            # Log account details
-            for account in accounts[:5]:  # Log first 5 accounts
-                print(f"  - Account: {account['name']} ({account['id']})")
-            if len(accounts) > 5:
-                print(f"  - ... and {len(accounts) - 5} more accounts")
-            
-            # Create multi-account anomaly detectors
-            detectors = event['ResourceProperties'].get('detectors', [])
-            print(f"Creating {len(detectors)} anomaly detectors...")
-            results = []
-            
-            for detector_config in detectors:
-                print(f"Creating detector: {detector_config['name']}")
-                result = create_multi_account_detector(detector_config, accounts)
-                results.append(result)
-                print(f"  - Status: {result['status']}")
-            
-            # Create cross-account dashboards
-            print("Creating cross-account dashboards...")
-            create_cross_account_dashboards()
-            
-            processing_time = (datetime.utcnow() - start_time).total_seconds()
-            print(f"Configuration completed in {processing_time:.2f} seconds")
-            
-            return {
-                'PhysicalResourceId': f'multi-account-detectors-{context.request_id}',
-                'Data': {
-                    'DetectorsCreated': len(results),
-                    'AccountsMonitored': len(accounts),
-                    'ProcessingTimeSeconds': processing_time,
-                    'ConfigurationStatus': 'SUCCESS'
-                }
-            }
-            
+        if request_type == 'Create':
+            response = create_anomaly_detectors(properties)
+        elif request_type == 'Update':
+            response = update_anomaly_detectors(properties)
         elif request_type == 'Delete':
-            # Clean up detectors if needed
-            print("Delete request - performing cleanup...")
-            cleanup_detectors()
-            return {
-                'PhysicalResourceId': event.get('PhysicalResourceId', 'deleted'),
-                'Data': {
-                    'ConfigurationStatus': 'DELETED'
-                }
-            }
-            
-    except Exception as e:
-        processing_time = (datetime.utcnow() - start_time).total_seconds()
-        print(f"Error after {processing_time:.2f} seconds: {str(e)}")
-        print(f"Stack trace: {traceback.format_exc()}")
+            response = delete_anomaly_detectors(properties)
+        else:
+            raise ValueError(f"Unknown request type: {request_type}")
         
-        # Return failure response for CloudFormation
-        return {
-            'PhysicalResourceId': event.get('PhysicalResourceId', f'failed-{context.request_id}'),
-            'Data': {
-                'ConfigurationStatus': 'FAILED',
-                'ErrorMessage': str(e),
-                'ProcessingTimeSeconds': processing_time
-            }
-        }
+        send_response(event, context, 'SUCCESS', response)
+        
+    except Exception as e:
+        logger.error(f"Error handling request: {str(e)}")
+        send_response(event, context, 'FAILED', {'Error': str(e)})
 
-
-def get_organization_accounts():
-    """
-    Get all accounts in the AWS Organization
-    """
-    accounts = []
-    paginator = organizations.get_paginator('list_accounts')
+def create_anomaly_detectors(properties):
+    """Create multi-account anomaly detectors"""
+    logger.info("Creating multi-account anomaly detectors")
     
-    for page in paginator.paginate():
-        for account in page['Accounts']:
-            if account['Status'] == 'ACTIVE':
-                accounts.append({
-                    'id': account['Id'],
-                    'name': account['Name'],
-                    'email': account['Email']
-                })
+    detectors = properties.get('detectors', [])
+    results = []
     
-    return accounts
-
-
-def create_multi_account_detector(detector_config, accounts):
-    """
-    Create a multi-account anomaly detector with account-based categories
-    """
-    detector_name = detector_config['name']
-    category_fields = detector_config.get('category_fields', [])
+    # First, ensure the index template exists
+    create_index_template()
     
-    # Base detector configuration
-    detector_body = {
-        "name": detector_name,
-        "description": f"Multi-account anomaly detector for {detector_name}",
-        "time_field": "eventTime",
-        "indices": ["cwl-multiaccounts*"],
-        "detection_interval": {
-            "period": {
-                "interval": 10,
-                "unit": "Minutes"
-            }
-        },
-        "window_delay": {
-            "period": {
-                "interval": 5,
-                "unit": "Minutes"
-            }
-        },
-        "shingle_size": 8,
-        "category_field": category_fields
-    }
+    # Create OpenSearch dashboards for multi-account visualization
+    create_multi_account_dashboards()
     
-    # Add feature based on detector type
-    if 'ec2' in detector_name:
-        detector_body['feature_attributes'] = [{
-            "feature_name": "ec2_instances",
-            "feature_enabled": True,
-            "aggregation_query": {
-                "instances_count": {
-                    "sum": {
-                        "field": "requestParameters.instancesSet.items.maxCount"
-                    }
-                }
-            }
-        }]
-        detector_body['filter_query'] = {
-            "bool": {
-                "filter": [{
-                    "term": {
-                        "eventName.keyword": "RunInstances"
-                    }
-                }]
-            }
-        }
-    elif 'lambda' in detector_name:
-        detector_body['feature_attributes'] = [{
-            "feature_name": "lambda_invocations",
-            "feature_enabled": True,
-            "aggregation_query": {
-                "invocation_count": {
-                    "value_count": {
-                        "field": "eventName.keyword"
-                    }
-                }
-            }
-        }]
-        detector_body['filter_query'] = {
-            "bool": {
-                "filter": [{
-                    "term": {
-                        "eventName.keyword": "Invoke"
-                    }
-                }]
-            }
-        }
-    elif 'ebs' in detector_name:
-        detector_body['feature_attributes'] = [{
-            "feature_name": "volume_creations",
-            "feature_enabled": True,
-            "aggregation_query": {
-                "volume_count": {
-                    "value_count": {
-                        "field": "eventName.keyword"
-                    }
-                }
-            }
-        }]
-        detector_body['filter_query'] = {
-            "bool": {
-                "filter": [{
-                    "term": {
-                        "eventName.keyword": "CreateVolume"
-                    }
-                }]
-            }
-        }
-    
-    # Create the detector
-    response = opensearch_request(
-        'POST',
-        '/_plugins/_anomaly_detection/detectors',
-        detector_body
-    )
-    
-    detector_id = response.get('_id')
-    print(f"Created detector {detector_name} with ID: {detector_id}")
-    
-    # Start the detector
-    start_response = opensearch_request(
-        'POST',
-        f'/_plugins/_anomaly_detection/detectors/{detector_id}/_start'
-    )
-    
-    print(f"Started detector {detector_name}")
-    
-    # Create monitor for the detector
-    create_detector_monitor(detector_name, detector_id)
-    
-    return {
-        'name': detector_name,
-        'id': detector_id,
-        'status': 'started'
-    }
-
-
-def create_detector_monitor(detector_name, detector_id):
-    """
-    Create an alerting monitor for the anomaly detector
-    """
-    monitor_body = {
-        "name": f"{detector_name}-monitor",
-        "type": "monitor",
-        "enabled": True,
-        "schedule": {
-            "period": {
-                "interval": 5,
-                "unit": "MINUTES"
-            }
-        },
-        "inputs": [{
-            "search": {
-                "indices": [f".opendistro-anomaly-results-{detector_id}*"],
-                "query": {
-                    "bool": {
-                        "filter": [{
-                            "range": {
-                                "anomaly_grade": {
-                                    "gt": 0.7
+    for detector_config in detectors:
+        try:
+            detector_name = detector_config['name']
+            category_fields = detector_config['category_fields']
+            
+            # Create anomaly detector
+            detector_body = {
+                "name": detector_name,
+                "description": f"Multi-account anomaly detector for {detector_name}",
+                "time_field": "@timestamp",
+                "indices": ["cwl-multiaccounts*"],
+                "feature_attributes": [
+                    {
+                        "feature_name": "event_count",
+                        "feature_enabled": True,
+                        "aggregation_query": {
+                            "event_count": {
+                                "value_count": {
+                                    "field": "eventName.keyword"
                                 }
                             }
-                        }]
+                        }
+                    }
+                ],
+                "window_delay": {
+                    "period": {
+                        "interval": 1,
+                        "unit": "Minutes"
+                    }
+                },
+                "detection_interval": {
+                    "period": {
+                        "interval": 10,
+                        "unit": "Minutes"
+                    }
+                },
+                "category_field": category_fields
+            }
+            
+            # Add event-specific filters
+            if 'ec2' in detector_name:
+                detector_body['filter_query'] = {
+                    "bool": {
+                        "must": [
+                            {"term": {"eventName.keyword": "RunInstances"}}
+                        ]
                     }
                 }
-            }
-        }],
-        "triggers": [{
-            "name": f"{detector_name}-trigger",
-            "severity": "1",
-            "condition": {
-                "script": {
-                    "source": "ctx.results[0].hits.total.value > 0",
-                    "lang": "painless"
+            elif 'lambda' in detector_name:
+                detector_body['filter_query'] = {
+                    "bool": {
+                        "must": [
+                            {"term": {"eventName.keyword": "Invoke"}}
+                        ]
+                    }
                 }
+            elif 'ebs' in detector_name:
+                detector_body['filter_query'] = {
+                    "bool": {
+                        "must": [
+                            {"term": {"eventName.keyword": "CreateVolume"}}
+                        ]
+                    }
+                }
+            
+            # Create the detector
+            url = f"https://{OPENSEARCH_HOST}/_plugins/_anomaly_detection/detectors"
+            response = requests.post(url, auth=awsauth, json=detector_body, headers={'Content-Type': 'application/json'})
+            
+            if response.status_code in [200, 201]:
+                detector_id = response.json().get('_id')
+                logger.info(f"Created detector {detector_name} with ID: {detector_id}")
+                
+                # Start the detector
+                start_detector(detector_id)
+                
+                results.append({
+                    'name': detector_name,
+                    'id': detector_id,
+                    'status': 'created'
+                })
+            else:
+                logger.error(f"Failed to create detector {detector_name}: {response.text}")
+                results.append({
+                    'name': detector_name,
+                    'status': 'failed',
+                    'error': response.text
+                })
+                
+        except Exception as e:
+            logger.error(f"Error creating detector {detector_config.get('name', 'unknown')}: {str(e)}")
+            results.append({
+                'name': detector_config.get('name', 'unknown'),
+                'status': 'failed',
+                'error': str(e)
+            })
+    
+    return {'detectors': results}
+
+def create_index_template():
+    """Create index template for multi-account logs"""
+    template_body = {
+        "index_patterns": ["cwl-multiaccounts*"],
+        "template": {
+            "settings": {
+                "number_of_shards": 1,
+                "number_of_replicas": 1,
+                "index.refresh_interval": "30s"
             },
-            "actions": [{
-                "name": f"{detector_name}-action",
-                "destination_id": create_sns_destination(),
-                "message_template": {
-                    "source": json.dumps({
-                        "Alert": f"Multi-account anomaly detected in {detector_name}",
-                        "Detector": detector_name,
-                        "Time": "{{ctx.periodStart}}",
-                        "Anomalies": "{{ctx.results[0].hits.total.value}}",
-                        "TopAccounts": "{{#ctx.results[0].hits.hits}}{{_source.entity}}{{/ctx.results[0].hits.hits}}"
-                    })
+            "mappings": {
+                "properties": {
+                    "@timestamp": {"type": "date"},
+                    "eventTime": {"type": "date"},
+                    "eventName": {
+                        "type": "text",
+                        "fields": {
+                            "keyword": {"type": "keyword"}
+                        }
+                    },
+                    "recipientAccountId": {"type": "keyword"},
+                    "accountAlias": {"type": "keyword"},
+                    "accountType": {"type": "keyword"},
+                    "organizationId": {"type": "keyword"},
+                    "organizationalUnit": {"type": "keyword"},
+                    "costCenter": {"type": "keyword"},
+                    "awsRegion": {"type": "keyword"},
+                    "sourceIPAddress": {"type": "ip"},
+                    "userIdentity.type": {"type": "keyword"},
+                    "eventSource": {"type": "keyword"}
                 }
-            }]
-        }]
-    }
-    
-    response = opensearch_request(
-        'POST',
-        '/_plugins/_alerting/monitors',
-        monitor_body
-    )
-    
-    print(f"Created monitor for {detector_name}")
-    return response
-
-
-def create_sns_destination():
-    """
-    Create or get SNS destination for alerts
-    """
-    # Check if destination already exists
-    destinations = opensearch_request(
-        'GET',
-        '/_plugins/_alerting/destinations'
-    )
-    
-    for dest in destinations.get('destinations', []):
-        if dest['name'] == 'multi-account-sns-destination':
-            return dest['id']
-    
-    # Create new destination
-    sns_topic_arn = os.environ.get('SNS_TOPIC_ARN')
-    sns_role_arn = os.environ.get('SNS_ALERT_ROLE')
-    
-    destination_body = {
-        "name": "multi-account-sns-destination",
-        "type": "sns",
-        "sns": {
-            "topic_arn": sns_topic_arn,
-            "role_arn": sns_role_arn
+            }
         }
     }
     
-    response = opensearch_request(
-        'POST',
-        '/_plugins/_alerting/destinations',
-        destination_body
-    )
+    url = f"https://{OPENSEARCH_HOST}/_index_template/cwl-multiaccounts-template"
+    response = requests.put(url, auth=awsauth, json=template_body, headers={'Content-Type': 'application/json'})
     
-    return response['_id']
+    if response.status_code in [200, 201]:
+        logger.info("Created index template for multi-account logs")
+    else:
+        logger.warning(f"Failed to create index template: {response.text}")
 
-
-def create_cross_account_dashboards():
-    """
-    Create OpenSearch dashboards for cross-account visualization
-    """
-    # Create index pattern for multi-account data
-    index_pattern = {
+def create_multi_account_dashboards():
+    """Create OpenSearch dashboards for multi-account anomaly visualization"""
+    logger.info("Creating multi-account dashboards")
+    
+    # Create index pattern for multi-account logs
+    index_pattern_body = {
         "attributes": {
             "title": "cwl-multiaccounts*",
-            "timeFieldName": "eventTime",
-            "fields": json.dumps([
-                {"name": "recipientAccountId", "type": "string"},
-                {"name": "accountAlias", "type": "string"},
-                {"name": "accountType", "type": "string"},
-                {"name": "eventName", "type": "string"},
-                {"name": "awsRegion", "type": "string"},
-                {"name": "eventTime", "type": "date"}
-            ])
+            "timeFieldName": "@timestamp"
         }
     }
     
-    # Create dashboard configurations
-    dashboards = [
-        {
-            "id": "multi-account-overview",
-            "attributes": {
-                "title": "Multi-Account Anomaly Overview",
-                "hits": 0,
-                "description": "Overview of anomalies across all AWS accounts",
-                "panelsJSON": json.dumps([
+    url = f"https://{OPENSEARCH_HOST}/_dashboards/api/saved_objects/index-pattern/cwl-multiaccounts"
+    response = requests.post(url, auth=awsauth, json=index_pattern_body, 
+                           headers={'Content-Type': 'application/json', 'osd-xsrf': 'true'})
+    
+    if response.status_code in [200, 409]:  # 409 means already exists
+        logger.info("Created/verified index pattern for multi-account logs")
+    else:
+        logger.warning(f"Failed to create index pattern: {response.text}")
+    
+    # Create visualization for account distribution
+    account_viz_body = {
+        "attributes": {
+            "title": "Multi-Account Event Distribution",
+            "visState": json.dumps({
+                "title": "Multi-Account Event Distribution",
+                "type": "pie",
+                "params": {
+                    "addTooltip": True,
+                    "addLegend": True,
+                    "legendPosition": "right"
+                },
+                "aggs": [
                     {
                         "id": "1",
-                        "type": "visualization",
-                        "title": "Anomalies by Account",
-                        "visualization": {
-                            "visType": "pie",
-                            "params": {
-                                "addTooltip": True,
-                                "addLegend": True,
-                                "legendPosition": "right"
-                            }
-                        }
+                        "enabled": True,
+                        "type": "count",
+                        "schema": "metric",
+                        "params": {}
                     },
                     {
                         "id": "2",
-                        "type": "visualization",
-                        "title": "Anomaly Timeline",
-                        "visualization": {
-                            "visType": "line",
-                            "params": {
-                                "grid": {"categoryLines": False, "style": {"color": "#eee"}}
-                            }
+                        "enabled": True,
+                        "type": "terms",
+                        "schema": "segment",
+                        "params": {
+                            "field": "accountAlias.keyword",
+                            "size": 10,
+                            "order": "desc",
+                            "orderBy": "1"
                         }
                     }
-                ])
+                ]
+            }),
+            "uiStateJSON": "{}",
+            "description": "Distribution of events across AWS accounts",
+            "version": 1,
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": json.dumps({
+                    "index": "cwl-multiaccounts",
+                    "query": {
+                        "match_all": {}
+                    }
+                })
             }
         }
-    ]
+    }
     
-    # Create visualizations and dashboards
-    for dashboard in dashboards:
-        opensearch_request(
-            'POST',
-            '/_dashboards/api/saved_objects/dashboard',
-            dashboard
-        )
+    url = f"https://{OPENSEARCH_HOST}/_dashboards/api/saved_objects/visualization/multi-account-distribution"
+    response = requests.post(url, auth=awsauth, json=account_viz_body,
+                           headers={'Content-Type': 'application/json', 'osd-xsrf': 'true'})
     
-    print("Created cross-account dashboards")
+    if response.status_code in [200, 409]:
+        logger.info("Created/verified account distribution visualization")
+    else:
+        logger.warning(f"Failed to create visualization: {response.text}")
 
+def start_detector(detector_id):
+    """Start an anomaly detector"""
+    url = f"https://{OPENSEARCH_HOST}/_plugins/_anomaly_detection/detectors/{detector_id}/_start"
+    response = requests.post(url, auth=awsauth, headers={'Content-Type': 'application/json'})
+    
+    if response.status_code == 200:
+        logger.info(f"Started detector {detector_id}")
+    else:
+        logger.warning(f"Failed to start detector {detector_id}: {response.text}")
 
-def cleanup_detectors():
-    """
-    Clean up detectors during stack deletion
-    """
+def update_anomaly_detectors(properties):
+    """Update existing anomaly detectors"""
+    logger.info("Updating multi-account anomaly detectors")
+    # For simplicity, recreate detectors on update
+    delete_anomaly_detectors(properties)
+    return create_anomaly_detectors(properties)
+
+def delete_anomaly_detectors(properties):
+    """Delete anomaly detectors and cleanup resources"""
+    logger.info("Deleting multi-account anomaly detectors")
+    
     try:
-        # List all detectors
-        detectors_response = opensearch_request('GET', '/_plugins/_anomaly_detection/detectors')
-        detectors = detectors_response.get('detectors', [])
+        # Delete anomaly detectors
+        delete_detectors()
         
-        # Find multi-account detectors
-        multi_account_detectors = [d for d in detectors if 'multi-account' in d.get('name', '')]
+        # Delete dashboards and visualizations
+        delete_dashboards()
         
-        for detector in multi_account_detectors:
-            detector_id = detector['_id']
-            detector_name = detector['name']
-            
-            try:
-                # Stop the detector
-                opensearch_request('POST', f'/_plugins/_anomaly_detection/detectors/{detector_id}/_stop')
-                print(f"Stopped detector {detector_name}")
-                
-                # Delete the detector
-                opensearch_request('DELETE', f'/_plugins/_anomaly_detection/detectors/{detector_id}')
-                print(f"Deleted detector {detector_name}")
-                
-            except Exception as e:
-                print(f"Error cleaning up detector {detector_name}: {str(e)}")
+        # Delete index template (optional - may want to keep for future deployments)
+        delete_index_template()
         
-        print(f"Cleanup completed for {len(multi_account_detectors)} detectors")
+        return {'status': 'deleted'}
         
     except Exception as e:
-        print(f"Error during cleanup: {str(e)}")
+        logger.error(f"Error deleting resources: {str(e)}")
+        return {'status': 'error', 'error': str(e)}
 
+def delete_detectors():
+    """Delete all multi-account anomaly detectors"""
+    # List all detectors and delete ones matching our naming pattern
+    url = f"https://{OPENSEARCH_HOST}/_plugins/_anomaly_detection/detectors/_search"
+    search_body = {
+        "query": {
+            "bool": {
+                "should": [
+                    {"wildcard": {"name": "multi-account-*"}}
+                ]
+            }
+        }
+    }
+    
+    response = requests.post(url, auth=awsauth, json=search_body, headers={'Content-Type': 'application/json'})
+    
+    if response.status_code == 200:
+        detectors = response.json().get('hits', {}).get('hits', [])
+        
+        for detector in detectors:
+            detector_id = detector['_id']
+            detector_name = detector['_source']['name']
+            
+            # Stop detector first
+            stop_url = f"https://{OPENSEARCH_HOST}/_plugins/_anomaly_detection/detectors/{detector_id}/_stop"
+            requests.post(stop_url, auth=awsauth)
+            
+            # Delete detector
+            delete_url = f"https://{OPENSEARCH_HOST}/_plugins/_anomaly_detection/detectors/{detector_id}"
+            delete_response = requests.delete(delete_url, auth=awsauth)
+            
+            if delete_response.status_code == 200:
+                logger.info(f"Deleted detector {detector_name}")
+            else:
+                logger.warning(f"Failed to delete detector {detector_name}: {delete_response.text}")
 
-def opensearch_request(method, path, body=None):
-    """
-    Make authenticated request to OpenSearch using AWS IAM
-    """
-    from botocore.auth import SigV4Auth
-    from botocore.awsrequest import AWSRequest
-    import urllib3
+def delete_dashboards():
+    """Delete multi-account dashboards and visualizations"""
+    # Delete visualization
+    viz_url = f"https://{OPENSEARCH_HOST}/_dashboards/api/saved_objects/visualization/multi-account-distribution"
+    response = requests.delete(viz_url, auth=awsauth, headers={'osd-xsrf': 'true'})
     
-    url = f"https://{OPENSEARCH_HOST}{path}"
-    headers = {'Content-Type': 'application/json'}
+    if response.status_code in [200, 404]:  # 404 means already deleted
+        logger.info("Deleted multi-account visualization")
+    else:
+        logger.warning(f"Failed to delete visualization: {response.text}")
     
-    # Create AWS request for signing
-    request = AWSRequest(method=method, url=url, data=json.dumps(body) if body else None, headers=headers)
+    # Delete index pattern
+    pattern_url = f"https://{OPENSEARCH_HOST}/_dashboards/api/saved_objects/index-pattern/cwl-multiaccounts"
+    response = requests.delete(pattern_url, auth=awsauth, headers={'osd-xsrf': 'true'})
     
-    # Sign the request with AWS credentials
-    credentials = boto3.Session().get_credentials()
-    SigV4Auth(credentials, 'es', AWS_REGION).add_auth(request)
+    if response.status_code in [200, 404]:
+        logger.info("Deleted multi-account index pattern")
+    else:
+        logger.warning(f"Failed to delete index pattern: {response.text}")
+
+def delete_index_template():
+    """Delete the multi-account index template"""
+    url = f"https://{OPENSEARCH_HOST}/_index_template/cwl-multiaccounts-template"
+    response = requests.delete(url, auth=awsauth)
     
-    # Make the request
-    http = urllib3.PoolManager()
-    response = http.request(
-        method,
-        url,
-        body=request.body,
-        headers=dict(request.headers)
-    )
+    if response.status_code in [200, 404]:
+        logger.info("Deleted multi-account index template")
+    else:
+        logger.warning(f"Failed to delete index template: {response.text}")
+
+def send_response(event, context, response_status, response_data):
+    """Send response to CloudFormation"""
+    response_url = event.get('ResponseURL')
+    if not response_url:
+        logger.info("No ResponseURL provided, skipping CloudFormation response")
+        return
     
-    if response.status >= 400:
-        raise Exception(f"OpenSearch request failed with status {response.status}: {response.data.decode()}")
+    response_body = {
+        'Status': response_status,
+        'Reason': f'See CloudWatch Log Stream: {context.log_stream_name}',
+        'PhysicalResourceId': context.log_stream_name,
+        'StackId': event.get('StackId'),
+        'RequestId': event.get('RequestId'),
+        'LogicalResourceId': event.get('LogicalResourceId'),
+        'Data': response_data
+    }
     
-    return json.loads(response.data.decode()) if response.data else {}
+    try:
+        response = requests.put(response_url, json=response_body)
+        logger.info(f"CloudFormation response sent: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Failed to send CloudFormation response: {str(e)}")
