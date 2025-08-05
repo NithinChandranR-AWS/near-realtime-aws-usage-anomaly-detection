@@ -111,9 +111,7 @@ validation_results.json
 .aws/
 aws-credentials.json
 
-# Generated diagrams and outputs
-generated-diagrams/
-*.png
+# Generated temporary files (keep architecture diagrams)
 *.jpg
 *.jpeg
 *.gif

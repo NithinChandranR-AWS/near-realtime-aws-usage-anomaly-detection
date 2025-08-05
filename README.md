@@ -1,262 +1,324 @@
-# Enhanced Multi-Account AWS Usage Anomaly Detection
+# Enhanced Multi-Account AWS Usage Anomaly Detection System
 
-This project implements a comprehensive multi-account AWS usage anomaly detection system with AI-powered natural language insights. The system monitors AWS API calls across your entire organization, detects unusual patterns, and provides intelligent analysis through Amazon Q for Business integration.
+A comprehensive solution for detecting usage anomalies across multiple AWS accounts with natural language insights powered by Amazon Q for Business.
 
-## 🚀 Features
+## 🌟 Features
 
 ### Multi-Account Support
-- **Organization-wide monitoring** across all AWS accounts
-- **Account-aware anomaly detection** with context-specific thresholds
-- **Cross-account correlation** to detect organization-wide patterns
-- **Centralized management** from the organization management account
+- **Organization-wide CloudTrail**: Centralized logging from all AWS accounts
+- **Cross-account anomaly detection**: Unified visibility across your entire organization
+- **Account-aware insights**: Context-rich alerts with account metadata
 
-### AI-Powered Insights
-- **Amazon Q for Business integration** for natural language queries
-- **Intelligent anomaly analysis** with root cause suggestions
-- **Cost impact analysis** with optimization recommendations
-- **Natural language alerts** for both technical and business stakeholders
+### Enhanced Anomaly Detection
+- **High-cardinality detection**: Account ID and region-based categorization
+- **Multiple service support**: EC2, Lambda, and EBS anomaly detection
+- **Intelligent thresholds**: Account type-aware threshold configuration
 
-### Advanced Anomaly Detection
-- **Multi-service support**: EC2, Lambda, EBS, and more
-- **Account type-aware thresholds** (production vs development)
-- **Real-time processing** with sub-5-minute latency
-- **Enhanced severity calculation** based on multiple factors
+### Natural Language Insights
+- **Amazon Q for Business integration**: Query anomalies using natural language
+- **Cost impact analysis**: Automatic cost implications for detected anomalies
+- **Security recommendations**: Contextual security guidance for each anomaly type
 
 ### Comprehensive Monitoring
-- **Real-time dashboards** with system health metrics
-- **Proactive alerting** with SNS notifications
-- **System health monitoring** with automated diagnostics
-- **Custom metrics** and performance tracking
+- **Real-time dashboards**: CloudWatch dashboards with system health metrics
+- **Proactive alerting**: SNS-based notifications with detailed context
+- **System health monitoring**: Automated health checks and custom metrics
 
 ## 🏗️ Architecture
 
-The system uses a hub-and-spoke architecture with the following components:
-
-![Enhanced Multi-Account Architecture](generated-diagrams/enhanced_multi_account_architecture.png)
-
-### Core Components
-
-1. **Organization Trail**: Centralized CloudTrail for all accounts
-2. **Multi-Account Processor**: Enhanced Lambda for account-aware processing
-3. **OpenSearch Domain**: High-performance anomaly storage and analysis
-4. **Amazon Q for Business**: Natural language insights and querying
-5. **Account Enrichment Service**: Metadata caching with Organizations API
-6. **Monitoring Stack**: Comprehensive dashboards and alerting
-
-### Data Flow
-
-![Anomaly Detection Data Flow](generated-diagrams/anomaly_detection_data_flow.png)
-
-The system processes CloudTrail events in real-time, enriches them with account metadata, performs anomaly detection using machine learning, and provides intelligent insights through Amazon Q for Business.
-
-### Deployment Architecture
-
-![Deployment Architecture](generated-diagrams/deployment_architecture.png)
-
-The solution is deployed using AWS CDK with four main stacks, providing a scalable and secure multi-account monitoring platform.
-
-## 📋 Prerequisites
-
-- AWS CLI configured with organization management account access
-- AWS CDK v2.110.0 or later
-- Python 3.8+ (Python 3.7 supported but deprecated)
-- Node.js 18.x or later
-- AWS Organizations enabled (for multi-account features)
+```mermaid
+graph TB
+    subgraph "Organization Accounts"
+        A1[Account 1] --> CT[Organization CloudTrail]
+        A2[Account 2] --> CT
+        A3[Account N] --> CT
+    end
+    
+    CT --> CWL[CloudWatch Logs]
+    CWL --> LAM[Multi-Account Logs Lambda]
+    LAM --> OS[OpenSearch Domain]
+    
+    OS --> AD[Anomaly Detectors]
+    AD --> AL[Alerting]
+    AL --> SNS[SNS Topics]
+    
+    OS --> QC[Q Business Connector]
+    QC --> QB[Q Business Application]
+    QB --> IC[Identity Center]
+    
+    subgraph "Monitoring"
+        SHM[System Health Monitor]
+        CWD[CloudWatch Dashboard]
+        DLQ[Dead Letter Queue]
+    end
+    
+    subgraph "User Access"
+        U1[Security Team] --> OSD[OpenSearch Dashboards]
+        U1 --> QBI[Q Business Interface]
+        U1 --> CWD
+    end
+```
 
 ## 🚀 Quick Start
 
-### 1. Clone and Setup
+### Prerequisites
+
+1. **AWS Account Setup**:
+   - AWS Organizations enabled
+   - Management account access
+   - CDK v2.110.0+ installed
+
+2. **Local Environment**:
+   ```bash
+   # Install required tools
+   npm install -g aws-cdk
+   pip install -r requirements.txt
+   ```
+
+3. **AWS Credentials**:
+   ```bash
+   aws configure
+   # Ensure you have admin permissions in the management account
+   ```
+
+### Deployment
+
+1. **Clone and Setup**:
+   ```bash
+   git clone <repository-url>
+   cd aws-usage-anomaly-detection
+   ```
+
+2. **Deploy Multi-Account System**:
+   ```bash
+   ./deploy_multi_account_enhanced.sh
+   ```
+
+3. **Validate Deployment**:
+   ```bash
+   python3 validate_enhanced_deployment.py
+   ```
+
+## 📋 Deployment Options
+
+### Single Account Mode
 ```bash
-git clone <repository-url>
-cd enhanced-multi-account-anomaly-detection
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+cdk deploy UsageAnomalyDetectorStack
 ```
 
-### 2. Deploy Multi-Account System
+### Multi-Account Mode
 ```bash
-# Deploy with full multi-account and Q Business support
-./deploy_multi_account_enhanced.sh
-
-# Or deploy with CDK directly
 cdk deploy --context deployment-mode=multi-account --all
 ```
 
-### 3. Validate Deployment
+### Manual Stack Deployment
 ```bash
-python validate_enhanced_deployment.py
+# 1. Organization Trail (Management Account)
+cdk deploy OrganizationTrailStack
+
+# 2. Base OpenSearch Stack
+cdk deploy EnhancedUsageAnomalyDetectorStack
+
+# 3. Multi-Account Enhancements
+cdk deploy MultiAccountAnomalyStack
+
+# 4. Q Business Integration (Optional)
+cdk deploy QBusinessInsightsStack
 ```
 
-## 🔧 Deployment Modes
-
-The system supports three deployment modes:
-
-### Multi-Account Mode (Recommended)
-```bash
-cdk deploy --context deployment-mode=multi-account --all
-```
-- Full organization-wide monitoring
-- Amazon Q for Business integration
-- Cross-account anomaly correlation
-- Enhanced dashboards and alerting
-
-### Single-Account with Q Business
-```bash
-cdk deploy --context deployment-mode=single-account-with-qbusiness --all
-```
-- Single account monitoring
-- Amazon Q for Business integration
-- Natural language insights
-
-### Single-Account (Legacy)
-```bash
-cdk deploy
-```
-- Basic single account monitoring
-- Backward compatibility mode
-
-## 📊 Monitoring and Dashboards
-
-### CloudWatch Dashboards
-Access your monitoring dashboard at:
-```
-https://console.aws.amazon.com/cloudwatch/home#dashboards:name=Multi-Account-Anomaly-Detection-System
-```
-
-### Key Metrics
-- **System Health Score**: Overall system health (0-100)
-- **Processing Latency**: Event processing time
-- **Account Enrichment Rate**: Metadata enrichment success
-- **Anomaly Detection Accuracy**: False positive/negative rates
-
-### Amazon Q for Business Queries
-Example natural language queries:
-- "Show me EC2 anomalies from the last 24 hours"
-- "What caused the spike in Lambda invocations yesterday?"
-- "Analyze cost impact of recent EBS volume creation anomalies"
-
-## ⚙️ Configuration
+## 🔧 Configuration
 
 ### Environment Variables
-Key configuration options:
 
-```bash
-# Anomaly detection sensitivity
-ANOMALY_THRESHOLD=3
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DEPLOYMENT_MODE` | Deployment mode (single-account/multi-account) | single-account |
+| `AWS_DEFAULT_REGION` | AWS region for deployment | us-east-1 |
+| `ENABLE_Q_BUSINESS` | Enable Q Business integration | true |
+| `ENABLE_COST_ANALYSIS` | Enable cost impact analysis | true |
 
-# Account metadata cache TTL
-CACHE_TTL_HOURS=24
+### Account Type Configuration
 
-# Enable cost analysis
-ENABLE_COST_ANALYSIS=true
+Configure account types using AWS Organizations tags:
 
-# Enable root cause analysis
-ENABLE_ROOT_CAUSE_ANALYSIS=true
+```json
+{
+  "AccountType": "production|staging|development",
+  "Environment": "prod|staging|dev",
+  "CostCenter": "engineering|security|operations"
+}
 ```
 
-### Account Type Classification
-The system automatically classifies accounts based on naming patterns:
-- **Production**: Contains "prod", "production", "prd"
-- **Staging**: Contains "stag", "staging", "stage"
-- **Development**: Contains "dev", "development", "develop"
-- **Testing**: Contains "test", "testing", "qa"
-- **Sandbox**: Contains "sandbox", "sb", "demo"
+### Anomaly Thresholds
 
-## 🔒 Security
+Customize thresholds in `lambdas/CrossAccountAnomalyProcessor/config.py`:
 
-### Data Protection
-- **Encryption at rest**: KMS encryption for all stored data
-- **Encryption in transit**: TLS 1.2+ for all communications
-- **IAM least privilege**: Minimal required permissions
-- **VPC deployment**: Optional network isolation
+```python
+THRESHOLDS = {
+    'production': {'ec2': 10, 'lambda': 1000, 'ebs': 20},
+    'staging': {'ec2': 5, 'lambda': 500, 'ebs': 10},
+    'development': {'ec2': 2, 'lambda': 100, 'ebs': 5}
+}
+```
 
-### Access Control
-- **Identity Center integration**: Centralized user management
-- **Fine-grained permissions**: Resource-level access control
-- **Audit logging**: Comprehensive activity tracking
+## 📊 Monitoring and Alerting
 
-## 💰 Cost Optimization
+### CloudWatch Dashboard
 
-### Built-in Cost Controls
-- **Lifecycle policies**: Automatic data retention management
-- **Serverless architecture**: Pay-per-use pricing model
-- **Efficient caching**: Reduced API calls and processing
-- **Cost analysis integration**: Real-time cost impact assessment
+Access the monitoring dashboard:
+1. Go to CloudWatch Console
+2. Navigate to Dashboards
+3. Open "MultiAccountAnomalyDetection"
 
-### Estimated Costs
-For a typical organization with 50 accounts:
-- **Lambda**: ~$50-100/month
-- **OpenSearch**: ~$200-400/month
-- **CloudTrail**: ~$10-20/month
-- **Storage**: ~$20-50/month
+### SNS Alerts
 
-## 🛠️ Troubleshooting
+Subscribe to system alerts:
+```bash
+aws sns subscribe \
+  --topic-arn <SystemAlertsTopicArn> \
+  --protocol email \
+  --notification-endpoint your-email@example.com
+```
+
+### Custom Metrics
+
+The system publishes custom metrics to the `MultiAccountAnomalyDetection` namespace:
+
+- `OverallHealthScore`: System health percentage (0-100)
+- `ProcessingSuccessRate`: Event processing success rate
+- `LambdaErrorRate`: Lambda function error rates
+- `OpenSearchUnassignedShards`: OpenSearch cluster health
+
+## 🤖 Amazon Q for Business Integration
+
+### Setup
+
+1. **Identity Center Configuration**:
+   - Automatic setup during deployment
+   - Creates "QBusinessAdmins" group
+   - Configures application assignments
+
+2. **User Access**:
+   ```bash
+   # Add users to Q Business admin group
+   aws identitystore create-group-membership \
+     --identity-store-id <IdentityStoreId> \
+     --group-id <QBusinessAdminGroupId> \
+     --member-id <UserId>
+   ```
+
+### Natural Language Queries
+
+Example queries you can ask Q Business:
+
+- "Show me EC2 anomalies from the last 24 hours"
+- "What accounts had the highest cost impact this week?"
+- "Are there any security concerns with recent Lambda anomalies?"
+- "Compare anomaly patterns between production and staging accounts"
+
+## 🔍 Troubleshooting
 
 ### Common Issues
 
-#### High Lambda Costs
+1. **CDK Version Compatibility**:
+   ```bash
+   # Upgrade CDK
+   npm install -g aws-cdk@latest
+   pip install -r requirements.txt --upgrade
+   ```
+
+2. **Organization Permissions**:
+   ```bash
+   # Verify organization access
+   aws organizations list-accounts
+   ```
+
+3. **OpenSearch Access**:
+   ```bash
+   # Check domain status
+   aws opensearch describe-domain --domain-name <domain-name>
+   ```
+
+### Validation Script
+
+Run comprehensive validation:
 ```bash
-# Check processing metrics
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/Lambda \
-  --metric-name Duration \
-  --dimensions Name=FunctionName,Value=MultiAccountLogsFunction
+python3 validate_enhanced_deployment.py
 ```
 
-#### Missing Account Metadata
+### Log Analysis
+
+Check Lambda function logs:
 ```bash
-# Refresh account cache
-aws lambda invoke \
-  --function-name AccountEnrichmentFunction \
-  --payload '{"action": "refresh_cache"}'
+# Multi-account logs processor
+aws logs tail /aws/lambda/MultiAccountAnomalyStack-MultiAccountLogsFunction --follow
+
+# Q Business connector
+aws logs tail /aws/lambda/MultiAccountAnomalyStack-QBusinessConnectorFunction --follow
+
+# System health monitor
+aws logs tail /aws/lambda/MultiAccountAnomalyStack-SystemHealthMonitorFunction --follow
 ```
 
-#### Q Business Integration Issues
-```bash
-# Validate Q Business setup
-python validate_enhanced_deployment.py --q-business-only
-```
+## 🔒 Security Considerations
 
-### Debug Mode
-Enable detailed logging:
-```bash
-export LOG_LEVEL=DEBUG
-export ENABLE_DETAILED_METRICS=true
-```
+### IAM Permissions
 
-## 🧪 Testing
+The system follows the principle of least privilege:
 
-### Run Unit Tests
-```bash
-python -m pytest tests/unit/ -v
-```
+- **Lambda Functions**: Minimal permissions for their specific tasks
+- **Cross-Account Access**: Secure trust relationships
+- **OpenSearch**: Fine-grained access control
+- **Q Business**: Identity Center-based authentication
 
-### Run Integration Tests
-```bash
-python -m pytest tests/integration/ -v
-```
+### Data Encryption
 
-### Validate Infrastructure
-```bash
-python tests/infrastructure_validation.py
-```
+- **In Transit**: All API calls use TLS
+- **At Rest**: OpenSearch and S3 encryption enabled
+- **CloudTrail**: KMS encryption for log files
 
-## 📚 Documentation
+### Network Security
 
-- [Deployment Guide](DEPLOYMENT_GUIDE_ENHANCED.md)
-- [Architecture Overview](docs/enhanced-architecture.md)
-- [Troubleshooting Guide](TROUBLESHOOTING.md)
+- **VPC Deployment**: Optional VPC deployment for OpenSearch
+- **Security Groups**: Restrictive security group rules
+- **Private Endpoints**: VPC endpoints for AWS services
+
+## 📈 Performance and Scaling
+
+### Capacity Planning
+
+| Component | Default | Scaling |
+|-----------|---------|---------|
+| Lambda Concurrency | 1000 | Auto-scaling |
+| OpenSearch Instances | t3.small.search | Manual scaling |
+| CloudWatch Logs | Unlimited | Pay-per-use |
+
+### Cost Optimization
+
+- **Reserved Instances**: Consider reserved OpenSearch instances
+- **Log Retention**: Configure appropriate log retention periods
+- **Lambda Memory**: Optimize Lambda memory allocation
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and development process.
+### Development Setup
+
+```bash
+# Install development dependencies
+pip install -r requirements-dev.txt
+
+# Run tests
+python -m pytest tests/
+
+# Run linting
+flake8 lambdas/
+```
 
 ## 📄 License
 
@@ -264,19 +326,47 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-For issues and questions:
-- Check the [Troubleshooting Guide](TROUBLESHOOTING.md)
-- Review [GitHub Issues](https://github.com/your-org/enhanced-anomaly-detection/issues)
-- Consult the [Documentation](docs/)
+- **Documentation**: Check this README and inline code comments
+- **Issues**: Create GitHub issues for bugs and feature requests
+- **Validation**: Use the validation script for deployment issues
 
-## 🎯 Roadmap
+## 🔄 Updates and Maintenance
 
-- [ ] **Machine Learning Integration**: Advanced anomaly detection with SageMaker
-- [ ] **Multi-Region Support**: Cross-region anomaly correlation
-- [ ] **Custom Connectors**: Integration with third-party SIEM tools
-- [ ] **Mobile Dashboard**: React Native mobile application
-- [ ] **Automated Remediation**: Self-healing capabilities for common issues
+### Regular Maintenance
+
+1. **Update Dependencies**:
+   ```bash
+   pip install -r requirements.txt --upgrade
+   npm update
+   ```
+
+2. **Monitor System Health**:
+   - Check CloudWatch dashboards daily
+   - Review SNS alerts
+   - Run validation script weekly
+
+3. **Review Anomaly Patterns**:
+   - Analyze false positives
+   - Adjust thresholds as needed
+   - Update account classifications
+
+### Version Updates
+
+The system supports rolling updates:
+```bash
+# Update with zero downtime
+cdk deploy --all --require-approval never
+```
 
 ---
 
-**Built with ❤️ for AWS Organizations seeking intelligent anomaly detection and cost optimization.**
+## 📊 System Metrics
+
+After deployment, monitor these key metrics:
+
+- **Processing Success Rate**: >95%
+- **Lambda Error Rate**: <1%
+- **OpenSearch Health**: Green
+- **Alert Response Time**: <5 minutes
+
+For detailed metrics, check the CloudWatch dashboard or run the validation script.

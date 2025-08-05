@@ -1,192 +1,198 @@
-# Architecture Overview
+# Enhanced Multi-Account AWS Usage Anomaly Detection - Architecture
 
-## Multi-Account AWS Usage Anomaly Detection System
+## Overview
 
-### High-Level Architecture
+This solution provides enterprise-grade multi-account anomaly detection with AI-powered natural language insights through Amazon Q Business integration.
+
+## Architecture Overview
+
+The system uses a hub-and-spoke architecture with centralized logging and distributed processing across multiple AWS accounts.
+
+## Architecture Diagram
 
 ```mermaid
 graph TB
     subgraph "AWS Organization"
-        subgraph "Account 1"
-            A1[CloudTrail Events]
+        subgraph "Management Account"
+            OrgTrail[Organization CloudTrail]
+            TrailBucket[S3 Bucket<br/>CloudTrail Logs]
+            TrailKMS[KMS Key<br/>Trail Encryption]
+            CWLogs[CloudWatch Logs<br/>Organization Trail]
         end
-        subgraph "Account 2"
-            A2[CloudTrail Events]
-        end
-        subgraph "Account N"
-            AN[CloudTrail Events]
+        
+        subgraph "Member Accounts"
+            MA1[Member Account 1<br/>Production]
+            MA2[Member Account 2<br/>Staging] 
+            MA3[Member Account 3<br/>Development]
         end
     end
     
-    subgraph "Management Account"
-        CT[Organization CloudTrail]
-        CWL[CloudWatch Logs]
-        
-        subgraph "Processing Layer"
-            LAM[Multi-Account Logs Lambda]
-            CONFIG[Config Lambda]
+    subgraph "Anomaly Detection System"
+        subgraph "Data Processing Layer"
+            LogsLambda[Multi-Account Logs<br/>Lambda Function]
+            AccountCache[DynamoDB<br/>Account Metadata Cache]
+            OrgAPI[AWS Organizations<br/>API]
         end
         
         subgraph "Storage & Analytics"
-            OS[OpenSearch Domain]
-            AD[Anomaly Detectors]
+            OpenSearch[Amazon OpenSearch<br/>Multi-Account Domain]
+            OSIndices[Indices:<br/>cwl-multiaccounts*]
+            AnomalyDetectors[Anomaly Detectors<br/>Account-Aware]
         end
         
-        subgraph "Insights Layer"
-            QC[Q Business Connector]
-            QB[Q Business Application]
-            IC[Identity Center]
+        subgraph "AI & Insights Layer"
+            QBusiness[Amazon Q Business<br/>Application]
+            QIndex[Q Business<br/>Index]
+            QConnector[Q Business<br/>Connector Lambda]
+            InsightsLambda[Natural Language<br/>Insights Lambda]
         end
         
-        subgraph "Monitoring"
-            CWD[CloudWatch Dashboard]
-            SNS[SNS Alerts]
-            SHM[System Health Monitor]
+        subgraph "Monitoring & Alerting"
+            CWDashboard[CloudWatch<br/>Dashboards]
+            SNSTopic[SNS Topics<br/>Alerts]
+            HealthMonitor[System Health<br/>Monitor Lambda]
+        end
+        
+        subgraph "Authentication & Access"
+            Cognito[Amazon Cognito<br/>User Pool]
+            IdentityCenter[AWS Identity Center<br/>Q Business Auth]
+            IAMRoles[IAM Roles<br/>Cross-Account Access]
         end
     end
     
-    subgraph "User Access"
-        U1[Security Team]
-        U2[Operations Team]
-        U3[Management]
+    subgraph "User Interface"
+        OSKibana[OpenSearch<br/>Dashboards]
+        QChat[Q Business<br/>Chat Interface]
+        CWConsole[CloudWatch<br/>Console]
     end
     
-    A1 --> CT
-    A2 --> CT
-    AN --> CT
-    CT --> CWL
-    CWL --> LAM
-    LAM --> OS
-    CONFIG --> OS
-    OS --> AD
-    AD --> SNS
-    OS --> QC
-    QC --> QB
-    QB --> IC
+    %% Data Flow
+    MA1 --> OrgTrail
+    MA2 --> OrgTrail
+    MA3 --> OrgTrail
     
-    U1 --> OS
-    U1 --> QB
-    U1 --> CWD
-    U2 --> OS
-    U2 --> CWD
-    U3 --> QB
+    OrgTrail --> TrailBucket
+    OrgTrail --> CWLogs
+    TrailKMS --> TrailBucket
     
-    style CT fill:#ff9999
-    style OS fill:#99ccff
-    style QB fill:#99ff99
-    style SNS fill:#ffcc99
+    CWLogs --> LogsLambda
+    LogsLambda --> AccountCache
+    LogsLambda --> OrgAPI
+    LogsLambda --> OpenSearch
+    
+    OpenSearch --> OSIndices
+    OSIndices --> AnomalyDetectors
+    
+    AnomalyDetectors --> SNSTopic
+    OpenSearch --> QConnector
+    QConnector --> QIndex
+    QIndex --> QBusiness
+    
+    QBusiness --> InsightsLambda
+    InsightsLambda --> SNSTopic
+    
+    HealthMonitor --> CWDashboard
+    OpenSearch --> CWDashboard
+    
+    %% User Access
+    Cognito --> OSKibana
+    IdentityCenter --> QChat
+    Users[Users] --> OSKibana
+    Users --> QChat
+    Users --> CWConsole
+    
+    %% Styling
+    classDef aws fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:#fff
+    classDef storage fill:#3F48CC,stroke:#232F3E,stroke-width:2px,color:#fff
+    classDef compute fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:#fff
+    classDef ai fill:#01A88D,stroke:#232F3E,stroke-width:2px,color:#fff
+    classDef security fill:#DD344C,stroke:#232F3E,stroke-width:2px,color:#fff
+    
+    class OrgTrail,MA1,MA2,MA3,OrgAPI aws
+    class TrailBucket,AccountCache,OpenSearch,OSIndices storage
+    class LogsLambda,QConnector,InsightsLambda,HealthMonitor compute
+    class QBusiness,QIndex,QChat ai
+    class TrailKMS,Cognito,IdentityCenter,IAMRoles security
 ```
 
-### Component Details
+## Component Details
 
-#### Data Collection Layer
-- **Organization CloudTrail**: Captures management and data events from all accounts
-- **CloudWatch Logs**: Centralized log aggregation point
-- **Multi-Account Logs Lambda**: Processes and enriches events with account metadata
+### 1. Data Collection Layer
+- **Organization CloudTrail**: Centralized logging across all AWS accounts
+- **S3 Bucket**: Encrypted storage for CloudTrail logs with lifecycle policies
+- **CloudWatch Logs**: Real-time log streaming for immediate processing
 
-#### Analytics Layer
-- **OpenSearch Domain**: Stores and indexes log data for analysis
-- **Anomaly Detectors**: High-cardinality detectors categorized by account and region
-- **Config Lambda**: Automatically configures detectors for new accounts
+### 2. Data Processing Layer
+- **Multi-Account Logs Lambda**: Processes CloudTrail events with account enrichment
+- **Account Metadata Cache**: DynamoDB table for caching account information
+- **AWS Organizations API**: Source of account metadata and organizational structure
 
-#### Insights Layer
-- **Q Business Application**: Natural language interface for querying anomalies
-- **Q Business Connector**: Synchronizes anomaly data for natural language processing
-- **Identity Center**: Provides secure authentication and authorization
+### 3. Storage & Analytics Layer
+- **Amazon OpenSearch**: Scalable search and analytics engine
+- **Multi-Account Indices**: Organized storage with account-aware indexing
+- **Anomaly Detectors**: ML-powered detection with account-based categorization
 
-#### Monitoring Layer
-- **CloudWatch Dashboard**: Real-time system health and performance metrics
-- **SNS Topics**: Multi-channel alerting for anomalies and system health
-- **System Health Monitor**: Automated health checks and custom metrics
+### 4. AI & Insights Layer
+- **Amazon Q Business**: Natural language query interface
+- **Q Business Index**: Searchable knowledge base of anomaly data
+- **Connector Lambda**: Syncs anomaly data to Q Business
+- **Insights Lambda**: Generates intelligent explanations and recommendations
 
-### Data Flow
+### 5. Monitoring & Alerting
+- **CloudWatch Dashboards**: Real-time system health and anomaly visualization
+- **SNS Topics**: Multi-channel alerting (email, Slack, etc.)
+- **Health Monitor**: Proactive system health checking
 
-```mermaid
-sequenceDiagram
-    participant Accounts as AWS Accounts
-    participant Trail as Organization Trail
-    participant Logs as CloudWatch Logs
-    participant Lambda as Processing Lambda
-    participant OS as OpenSearch
-    participant AD as Anomaly Detectors
-    participant QB as Q Business
-    participant Users as End Users
-    
-    Accounts->>Trail: API Events
-    Trail->>Logs: Structured Logs
-    Logs->>Lambda: Log Stream
-    Lambda->>Lambda: Enrich with Account Metadata
-    Lambda->>OS: Indexed Events
-    OS->>AD: Trigger Analysis
-    AD->>AD: Detect Anomalies
-    AD->>QB: Sync Anomaly Data
-    Users->>QB: Natural Language Query
-    QB->>Users: Contextual Insights
-    AD->>Users: Alert Notifications
-```
+### 6. Security & Access Control
+- **Amazon Cognito**: Authentication for OpenSearch dashboards
+- **AWS Identity Center**: SSO integration for Q Business
+- **IAM Roles**: Fine-grained cross-account permissions
 
-### Security Architecture
+## Data Flow
 
-```mermaid
-graph LR
-    subgraph "Identity & Access"
-        IC[Identity Center]
-        IAM[IAM Roles]
-        RBAC[Role-Based Access]
-    end
-    
-    subgraph "Data Protection"
-        KMS[KMS Encryption]
-        TLS[TLS in Transit]
-        VPC[VPC Isolation]
-    end
-    
-    subgraph "Monitoring"
-        CT[CloudTrail Audit]
-        CW[CloudWatch Logs]
-        AL[Access Logging]
-    end
-    
-    IC --> RBAC
-    IAM --> RBAC
-    RBAC --> KMS
-    RBAC --> TLS
-    RBAC --> VPC
-    
-    CT --> AL
-    CW --> AL
-    
-    style IC fill:#ff9999
-    style KMS fill:#99ccff
-    style CT fill:#99ff99
-```
+1. **Event Collection**: CloudTrail events from all organization accounts flow to the centralized trail
+2. **Real-time Processing**: CloudWatch Logs triggers the processing Lambda for immediate analysis
+3. **Account Enrichment**: Events are enriched with account metadata from Organizations API
+4. **Indexing**: Enriched events are indexed in OpenSearch with account-aware categorization
+5. **Anomaly Detection**: ML detectors analyze patterns across accounts and services
+6. **AI Insights**: Anomalies are synced to Q Business for natural language querying
+7. **Alerting**: Notifications are sent through SNS with intelligent context
 
-### Deployment Architecture
+## Deployment Modes
 
-```mermaid
-graph TD
-    subgraph "CDK Stacks"
-        OTS[OrganizationTrailStack]
-        EAS[EnhancedAnomalyDetectorStack]
-        MAS[MultiAccountAnomalyStack]
-        QBS[QBusinessStack]
-    end
-    
-    subgraph "Dependencies"
-        OTS --> MAS
-        EAS --> MAS
-        MAS --> QBS
-    end
-    
-    subgraph "Resources"
-        OTS --> CT[CloudTrail + S3 + KMS]
-        EAS --> OS[OpenSearch + Cognito]
-        MAS --> LAM[Lambda Functions + SNS]
-        QBS --> QB[Q Business + Identity Center]
-    end
-    
-    style OTS fill:#ff9999
-    style EAS fill:#99ccff
-    style MAS fill:#99ff99
-    style QBS fill:#ffcc99
-```
+### Single Account Mode
+- Deploys basic anomaly detection for a single AWS account
+- Uses standard CloudTrail and OpenSearch configuration
+- Suitable for smaller organizations or proof-of-concept deployments
+
+### Multi-Account Mode
+- Deploys organization-wide CloudTrail and cross-account processing
+- Includes account enrichment and organizational context
+- Provides centralized visibility across all organization accounts
+
+### Multi-Account with Q Business
+- Full enterprise deployment with AI-powered insights
+- Natural language querying and intelligent recommendations
+- Cost impact analysis and root cause suggestions
+
+## Security Considerations
+
+- **Encryption**: All data encrypted in transit and at rest using KMS
+- **Least Privilege**: IAM roles follow principle of least privilege
+- **Network Isolation**: Optional VPC deployment for enhanced security
+- **Audit Logging**: Comprehensive audit trail for all system operations
+- **Identity Integration**: SSO integration with existing identity providers
+
+## Scalability Features
+
+- **Auto Scaling**: Lambda functions scale automatically with event volume
+- **OpenSearch Scaling**: Cluster scales based on data volume and query load
+- **Caching**: Multi-level caching reduces API calls and improves performance
+- **Batch Processing**: Efficient bulk operations for high-volume scenarios
+
+## Cost Optimization
+
+- **Lifecycle Policies**: Automatic data archival and deletion
+- **Reserved Capacity**: OpenSearch reserved instances for predictable workloads
+- **Efficient Indexing**: Optimized index patterns and retention policies
+- **Smart Caching**: Reduces Organizations API calls through intelligent caching
