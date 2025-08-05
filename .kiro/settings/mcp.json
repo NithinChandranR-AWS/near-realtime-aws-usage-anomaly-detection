@@ -1,0 +1,52 @@
+{
+  "mcpServers": {
+    "aws-docs": {
+      "command": "uvx",
+      "args": [
+        "awslabs.aws-documentation-mcp-server@latest"
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "search",
+        "get-documentation",
+        "search_documentation"
+      ]
+    },
+    "aws-cli": {
+      "command": "uvx",
+      "args": [
+        "mcp-aws-cli@latest"
+      ],
+      "env": {
+        "AWS_REGION": "us-east-1"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "describe-stacks",
+        "list-accounts",
+        "get-caller-identity"
+      ]
+    },
+    "aws-diagram": {
+      "command": "uvx",
+      "args": [
+        "awslabs.aws-diagram-mcp-server@latest"
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "create_diagram",
+        "list_services",
+        "get_service_info",
+        "list_icons",
+        "list_icons",
+        "generate_diagram"
+      ]
+    }
+  }
+}

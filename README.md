@@ -32,12 +32,28 @@ This project implements a comprehensive multi-account AWS usage anomaly detectio
 
 The system uses a hub-and-spoke architecture with the following components:
 
+![Enhanced Multi-Account Architecture](generated-diagrams/enhanced_multi_account_architecture.png)
+
+### Core Components
+
 1. **Organization Trail**: Centralized CloudTrail for all accounts
 2. **Multi-Account Processor**: Enhanced Lambda for account-aware processing
 3. **OpenSearch Domain**: High-performance anomaly storage and analysis
 4. **Amazon Q for Business**: Natural language insights and querying
 5. **Account Enrichment Service**: Metadata caching with Organizations API
 6. **Monitoring Stack**: Comprehensive dashboards and alerting
+
+### Data Flow
+
+![Anomaly Detection Data Flow](generated-diagrams/anomaly_detection_data_flow.png)
+
+The system processes CloudTrail events in real-time, enriches them with account metadata, performs anomaly detection using machine learning, and provides intelligent insights through Amazon Q for Business.
+
+### Deployment Architecture
+
+![Deployment Architecture](generated-diagrams/deployment_architecture.png)
+
+The solution is deployed using AWS CDK with four main stacks, providing a scalable and secure multi-account monitoring platform.
 
 ## 📋 Prerequisites
 
