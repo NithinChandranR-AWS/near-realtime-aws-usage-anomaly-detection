@@ -1,6 +1,7 @@
 const zlib = require('zlib');
 const crypto = require('crypto');
 const AWS = require('aws-sdk');
+const accountEnrichment = require('./account_enrichment');
 
 // OpenSearch client setup
 const endpoint = process.env.OPENSEARCH_DOMAIN_ENDPOINT;
@@ -19,7 +20,10 @@ const metrics = {
     processedEvents: 0,
     failedEvents: 0,
     enrichedAccounts: new Set(),
-    errors: []
+    errors: [],
+    cacheHits: 0,
+    cacheMisses: 0,
+    organizationsApiCalls: 0
 };
 
 function resetMetrics() {
@@ -27,6 +31,49 @@ function resetMetrics() {
     metrics.failedEvents = 0;
     metrics.enrichedAccounts = new Set();
     metrics.errors = [];
+    metrics.cacheHits = 0;
+    metrics.cacheMisses = 0;
+    metrics.organizationsApiCalls = 0;
+}
+
+// Publish custom metrics to CloudWatch
+async function publishMetrics() {
+    try {
+        const params = {
+            Namespace: 'AWS/Lambda/MultiAccountAnomalyDetector',
+            MetricData: [
+                {
+                    MetricName: 'ProcessedEvents',
+                    Value: metrics.processedEvents,
+                    Unit: 'Count'
+                },
+                {
+                    MetricName: 'FailedEvents',
+                    Value: metrics.failedEvents,
+                    Unit: 'Count'
+                },
+                {
+                    MetricName: 'EnrichedAccounts',
+                    Value: metrics.enrichedAccounts.size,
+                    Unit: 'Count'
+                },
+                {
+                    MetricName: 'CacheHitRate',
+                    Value: metrics.cacheHits / (metrics.cacheHits + metrics.cacheMisses) * 100 || 0,
+                    Unit: 'Percent'
+                },
+                {
+                    MetricName: 'OrganizationsApiCalls',
+                    Value: metrics.organizationsApiCalls,
+                    Unit: 'Count'
+                }
+            ]
+        };
+        
+        await cloudwatch.putMetricData(params).promise();
+    } catch (error) {
+        console.warn('Failed to publish metrics:', error.message);
+    }
 }
 
 exports.handler = async (event, context) => {
@@ -57,15 +104,10 @@ exports.handler = async (event, context) => {
             
             for (const record of cloudTrailRecord.Records) {
                 try {
-                    // Enhance record with multi-account context
+                    // Enhance record with multi-account context using dedicated service
                     if (enableAccountEnrichment) {
-                        await enrichWithAccountContext(record);
-                        enrichedAccounts.add(record.recipientAccountId);
-                    }
-                    
-                    // Add organization context
-                    if (enableOrgContext) {
-                        await enrichWithOrgContext(record);
+                        await accountEnrichment.enrichRecord(record);
+                        metrics.enrichedAccounts.add(record.recipientAccountId);
                     }
                     
                     // Create document ID including account ID for uniqueness
@@ -91,10 +133,10 @@ exports.handler = async (event, context) => {
                     
                     bulkRequestBody.push(action);
                     bulkRequestBody.push(document);
-                    processedEvents++;
+                    metrics.processedEvents++;
                 } catch (recordError) {
                     console.error(`Error processing record ${record.eventID}:`, recordError);
-                    failedEvents++;
+                    metrics.failedEvents++;
                 }
             }
         } catch (error) {
@@ -109,17 +151,24 @@ exports.handler = async (event, context) => {
             
             console.log(`Processing Summary:`);
             console.log(`  - Documents indexed: ${bulkRequestBody.length / 2}`);
-            console.log(`  - Events processed: ${processedEvents}`);
-            console.log(`  - Events failed: ${failedEvents}`);
-            console.log(`  - Accounts enriched: ${enrichedAccounts.size}`);
+            console.log(`  - Events processed: ${metrics.processedEvents}`);
+            console.log(`  - Events failed: ${metrics.failedEvents}`);
+            console.log(`  - Accounts enriched: ${metrics.enrichedAccounts.size}`);
+            console.log(`  - Cache hits: ${metrics.cacheHits}`);
+            console.log(`  - Cache misses: ${metrics.cacheMisses}`);
+            console.log(`  - Organizations API calls: ${metrics.organizationsApiCalls}`);
             console.log(`  - Processing time: ${processingTime}ms`);
+            
+            // Publish metrics to CloudWatch
+            await publishMetrics();
+            await accountEnrichment.publishEnrichmentMetrics();
             
             return {
                 statusCode: 200,
                 documentsIndexed: bulkRequestBody.length / 2,
-                eventsProcessed: processedEvents,
-                eventsFailed: failedEvents,
-                accountsEnriched: enrichedAccounts.size,
+                eventsProcessed: metrics.processedEvents,
+                eventsFailed: metrics.failedEvents,
+                accountsEnriched: metrics.enrichedAccounts.size,
                 processingTimeMs: processingTime
             };
         }
@@ -140,8 +189,8 @@ exports.handler = async (event, context) => {
         return {
             statusCode: 500,
             error: error.message,
-            eventsProcessed: processedEvents,
-            eventsFailed: failedEvents,
+            eventsProcessed: metrics.processedEvents,
+            eventsFailed: metrics.failedEvents,
             processingTimeMs: processingTime
         };
     }
@@ -154,8 +203,11 @@ async function enrichWithAccountContext(record) {
     if (accountMetadataCache.has(accountId)) {
         const metadata = accountMetadataCache.get(accountId);
         Object.assign(record, metadata);
+        metrics.cacheHits++;
         return;
     }
+    
+    metrics.cacheMisses++;
     
     try {
         // Fetch account metadata with retry logic
@@ -182,6 +234,7 @@ async function fetchAccountMetadataWithRetry(accountId, maxRetries = 3) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             // Try to get account details from Organizations API
+            metrics.organizationsApiCalls++;
             const accountDetails = await organizations.describeAccount({
                 AccountId: accountId
             }).promise();
