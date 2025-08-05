@@ -4,6 +4,17 @@
 
 This solution provides enterprise-grade multi-account anomaly detection with AI-powered natural language insights through Amazon Q Business integration.
 
+## Architecture Diagrams
+
+### System Architecture
+![Enhanced Multi-Account Architecture](../generated-diagrams/enhanced_multi_account_architecture.png)
+
+### Data Flow
+![Anomaly Detection Data Flow](../generated-diagrams/anomaly_detection_data_flow.png)
+
+### Deployment Architecture
+![Deployment Architecture](../generated-diagrams/deployment_architecture.png)
+
 ## Architecture Diagram
 
 ```mermaid
